@@ -1,0 +1,20 @@
+[run]
+omit =
+    /**/memcachio/_version*
+    /**/memcachio/tests/*
+    setup.py
+    versioneer.py
+[report]
+exclude_lines =
+    pragma: no cover
+    noqa
+    raise NotImplementedError
+    @overload
+    if False
+    if TYPE_CHECKING
+    if typing.TYPE_CHECKING
+    class .*\bProtocol\):
+    @(abc\.)?abstractmethod
+    __repr__
+    raise ValueError\(.*?Unable to map
+    assert False

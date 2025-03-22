@@ -1,0 +1,5 @@
+-r publishing.txt
+ruff
+mypy==1.15.0; implementation_name!='pypy'
+twine
+wheel

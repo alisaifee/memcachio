@@ -1,0 +1,7 @@
+include LICENSE
+include README.md
+exclude __pycache__
+recursive-exclude tests *
+recursive-include requirements *.txt
+include versioneer.py
+include memcachio/_version.py

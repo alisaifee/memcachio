@@ -1,0 +1,20 @@
+services:
+  memcached-1:
+    image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
+    ports:
+      - 33211:11211
+  memcached-2:
+    image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
+    ports:
+      - 33212:11211
+  memcached-3:
+    image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
+    ports:
+      - 33213:11211
+  memcached-uds:
+    image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
+    command: sh -c "test ${HOST_OS} = \"Darwin\" && exit || memcached -s /sockets/memcachio.sock -a 777"
+    volumes:
+      - type: bind
+        source: /tmp/
+        target: /sockets/
