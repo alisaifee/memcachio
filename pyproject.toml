@@ -1,0 +1,49 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [
+  "mypy==1.15.0",
+  "packaging>=21,<25",
+  "setuptools",
+  "types_deprecated",
+  "versioneer[toml]",
+]
+
+[tool.mypy]
+strict = true
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_any_unimported = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+disallow_untyped_decorators = true
+show_error_codes = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+    "async_timeout",
+    "beartype",
+    "mmh3"
+]
+ignore_errors = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "memcachio._version"
+ignore_errors = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length=100
+exclude = ["doc/**","_version.py","versioneer.py"]
+
+[tool.ruff.lint.isort]
+required-imports = ["from __future__ import annotations"]
+
+[tool.versioneer]
+VCS = "git"
+style = "pep440-pre"
+versionfile_source = "memcachio/_version.py"
+versionfile_build = "memcachio/_version.py"
+parentdir_prefix = "memcachio-"

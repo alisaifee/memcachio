@@ -1,0 +1,13 @@
+-r main.txt
+beartype
+coverage
+lovely-pytest-docker
+mmh3
+pytest
+pytest-asyncio
+pytest-benchmark[histogram]
+pytest-cov
+pytest-env
+pytest-lazy-fixtures
+pytest-mock
+pytest-reverse

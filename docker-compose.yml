@@ -1,0 +1,41 @@
+services:
+  memcached-1:
+    image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
+    command: -M -m 1024
+    ports:
+      - 44441:11211
+  memcached-2:
+    image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
+    command: -M -m 1024
+    ports:
+      - 44442:11211
+  memcached-3:
+    image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
+    command: -M -m 1024
+    ports:
+      - 44443:11211
+  memcached-ssl:
+    image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
+    command: -M -m 1024 -vvv -Z -o ssl_chain_cert=/tls/server-cert.pem,ssl_key=/tls/server-key.pem
+    ports:
+      - 44444:11211
+    volumes:
+      - type: bind
+        source: ./tests/tls
+        target: /tls/
+  memcached-sasl:
+    image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
+    command: -S -Y /auth/pwd.txt -vvv
+    ports:
+      - 44445:11211
+    volumes:
+      - type: bind
+        source: ./tests/auth
+        target: /auth/
+  memcached-uds:
+    image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
+    command: sh -c "test ${HOST_OS} = \"Darwin\" && exit || memcached -M -m 1024 -s /sockets/memcachio.sock -a 777"
+    volumes:
+      - type: bind
+        source: /tmp/
+        target: /sockets/
