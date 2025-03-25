@@ -158,16 +158,16 @@ class GatCommand(GetCommand[AnyStr]):
     def __init__(
         self,
         keys: tuple[KeyT, ...],
-        exptime: int,
+        expiry: int,
         *,
         decode: bool = False,
         encoding: str = "utf-8",
     ) -> None:
-        self.exptime = exptime
+        self.expiry = expiry
         super().__init__(keys, decode=decode, encoding=encoding)
 
     def build_request_parameters(self) -> bytes:
-        return f"{self.exptime} {' '.join(self.keys)}".encode()
+        return f"{self.expiry} {' '.join(self.keys)}".encode()
 
 
 class GatsCommand(GatCommand[AnyStr]):
@@ -181,20 +181,20 @@ class GenericStoreCommand(BasicResponseCommand, SingleKeyCommand[bool]):
         value: ValueT,
         /,
         flags: int | None = None,
-        exptime: int = 0,
+        expiry: int = 0,
         noreply: bool = False,
         cas: int | None = None,
         encoding: str = "utf-8",
     ) -> None:
         self.encoding = encoding
         self.flags = flags
-        self.exptime = exptime
+        self.expiry = expiry
         self.value = bytestr(value, self.encoding)
         self.cas = cas
         super().__init__(key, noreply)
 
     def build_request_parameters(self) -> bytes:
-        header = f"{decodedstr(self.key)} {self.flags or 0} {self.exptime}"
+        header = f"{decodedstr(self.key)} {self.flags or 0} {self.expiry}"
         header += f" {len(self.value)}"
         if self.cas is not None:
             header += f" {self.cas}"
@@ -278,12 +278,12 @@ class FlushAllCommand(BasicResponseCommand, NoKeyCommand[bool]):
     name = Commands.FLUSH_ALL
     success = Responses.OK
 
-    def __init__(self, exptime: int, noreply: bool) -> None:
-        self.exptime = exptime
+    def __init__(self, expiry: int, noreply: bool) -> None:
+        self.expiry = expiry
         super().__init__(noreply)
 
     def build_request_parameters(self) -> bytes:
-        return bytestr(self.exptime)
+        return bytestr(self.expiry)
 
     def merge(self, results: list[bool]) -> bool:
         return all(results)

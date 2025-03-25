@@ -42,35 +42,35 @@ class TestCommands:
         assert not any(cas is None for cas in cass)
 
     async def test_gat(self, client: memcachio.Client):
-        assert {} == await client.gat("not-exist", exptime=1)
+        assert {} == await client.gat("not-exist", expiry=1)
         assert await client.set("exists", 1)
-        assert {b"exists": ANY} == await client.gat("exists", exptime=1)
+        assert {b"exists": ANY} == await client.gat("exists", expiry=1)
         await asyncio.sleep(1)
         assert {} == await client.get("exists")
 
     async def test_gat_many(self, client: memcachio.Client):
         values = {f"key-{i}": i for i in range(100)}
-        assert {} == await client.gat(*values.keys(), exptime=1)
+        assert {} == await client.gat(*values.keys(), expiry=1)
         for key, value in values.items():
             assert await client.set(key, value)
-        assert len((await client.gat(*values.keys(), exptime=1)).items()) == 100
+        assert len((await client.gat(*values.keys(), expiry=1)).items()) == 100
         await asyncio.sleep(1)
-        assert len((await client.gat(*values.keys(), exptime=1)).items()) == 0
+        assert len((await client.gat(*values.keys(), expiry=1)).items()) == 0
 
     async def test_gats(self, client: memcachio.Client):
-        assert {} == await client.gats("not-exist", exptime=1)
+        assert {} == await client.gats("not-exist", expiry=1)
         assert await client.set("exists", 1)
-        assert (await client.gats("exists", exptime=1)).get(b"exists").cas is not None
-        assert {} == await client.gats("exist", exptime=1)
+        assert (await client.gats("exists", expiry=1)).get(b"exists").cas is not None
+        assert {} == await client.gats("exist", expiry=1)
 
     async def test_gats_many(self, client: memcachio.Client):
         values = {f"key-{i}": i for i in range(100)}
-        assert {} == await client.gats(*values.keys(), exptime=1)
+        assert {} == await client.gats(*values.keys(), expiry=1)
         for key, value in values.items():
             assert await client.set(key, value)
-        assert len((await client.gats(*values.keys(), exptime=1)).items()) == 100
+        assert len((await client.gats(*values.keys(), expiry=1)).items()) == 100
         await asyncio.sleep(1)
-        assert len((await client.gats(*values.keys(), exptime=1)).items()) == 0
+        assert len((await client.gats(*values.keys(), expiry=1)).items()) == 0
 
     async def test_set(self, client: memcachio.Client):
         assert await client.set("key", 1)
@@ -79,7 +79,7 @@ class TestCommands:
         assert await client.set("key", 2, 1)
         assert (await client.get("key")).get(b"key").flags == 1
 
-        assert await client.set("key", 3, exptime=1)
+        assert await client.set("key", 3, expiry=1)
         await asyncio.sleep(1)
         assert not await client.get("key")
 
@@ -122,7 +122,7 @@ class TestCommands:
         assert await client.set("key", 1)
         item = (await client.get("key")).get(b"key")
         assert item.value == b"1"
-        assert await client.replace("key", 2, exptime=1)
+        assert await client.replace("key", 2, expiry=1)
         item = (await client.get("key")).get(b"key")
         assert item.value == b"2"
         await asyncio.sleep(1)

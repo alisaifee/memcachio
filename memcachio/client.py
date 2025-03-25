@@ -92,21 +92,21 @@ class Client(Generic[AnyStr]):
             GetsCommand(keys, decode=self.decode_responses, encoding=self.encoding)
         )
 
-    async def gat(self, *keys: KeyT, exptime: int) -> dict[AnyStr, MemcachedItem[AnyStr]]:
+    async def gat(self, *keys: KeyT, expiry: int) -> dict[AnyStr, MemcachedItem[AnyStr]]:
         return await self.execute_command(
-            GatCommand(keys, exptime, decode=self.decode_responses, encoding=self.encoding)
+            GatCommand(keys, expiry, decode=self.decode_responses, encoding=self.encoding)
         )
 
-    async def gats(self, *keys: KeyT, exptime: int) -> dict[AnyStr, MemcachedItem[AnyStr]]:
+    async def gats(self, *keys: KeyT, expiry: int) -> dict[AnyStr, MemcachedItem[AnyStr]]:
         return await self.execute_command(
-            GatsCommand(keys, exptime, decode=self.decode_responses, encoding=self.encoding)
+            GatsCommand(keys, expiry, decode=self.decode_responses, encoding=self.encoding)
         )
 
     async def set(
-        self, key: KeyT, value: ValueT, /, flags: int = 0, exptime: int = 0, noreply: bool = False
+        self, key: KeyT, value: ValueT, /, flags: int = 0, expiry: int = 0, noreply: bool = False
     ) -> bool:
         return await self.execute_command(
-            SetCommand(key, value, flags, exptime, noreply, encoding=self.encoding)
+            SetCommand(key, value, flags, expiry, noreply, encoding=self.encoding)
         )
 
     async def cas(
@@ -116,41 +116,37 @@ class Client(Generic[AnyStr]):
         cas: int,
         /,
         flags: int = 0,
-        exptime: int = 0,
+        expiry: int = 0,
         noreply: bool = False,
     ) -> bool:
         return await self.execute_command(
-            CheckAndSetCommand(
-                key, value, flags, exptime, noreply, cas=cas, encoding=self.encoding
-            ),
+            CheckAndSetCommand(key, value, flags, expiry, noreply, cas=cas, encoding=self.encoding),
         )
 
     async def add(
-        self, key: KeyT, value: ValueT, /, flags: int = 0, exptime: int = 0, noreply: bool = False
+        self, key: KeyT, value: ValueT, /, flags: int = 0, expiry: int = 0, noreply: bool = False
     ) -> bool:
         return await self.execute_command(
-            AddCommand(key, value, flags, exptime, noreply, encoding=self.encoding)
+            AddCommand(key, value, flags, expiry, noreply, encoding=self.encoding)
         )
 
     async def append(
-        self, key: KeyT, value: ValueT, /, flags: int = 0, exptime: int = 0, noreply: bool = False
+        self, key: KeyT, value: ValueT, /, flags: int = 0, expiry: int = 0, noreply: bool = False
     ) -> bool:
         return await self.execute_command(
-            AppendCommand(key, value, flags, exptime, noreply, encoding=self.encoding)
+            AppendCommand(key, value, flags, expiry, noreply, encoding=self.encoding)
         )
 
-    async def prepend(
-        self, key: KeyT, value: ValueT, /, noreply: bool = False
-    ) -> bool:
+    async def prepend(self, key: KeyT, value: ValueT, /, noreply: bool = False) -> bool:
         return await self.execute_command(
             PrependCommand(key, value, noreply=noreply, encoding=self.encoding)
         )
 
     async def replace(
-        self, key: KeyT, value: ValueT, /, flags: int = 0, exptime: int = 0, noreply: bool = False
+        self, key: KeyT, value: ValueT, /, flags: int = 0, expiry: int = 0, noreply: bool = False
     ) -> bool:
         return await self.execute_command(
-            ReplaceCommand(key, value, flags, exptime, noreply, encoding=self.encoding)
+            ReplaceCommand(key, value, flags, expiry, noreply, encoding=self.encoding)
         )
 
     async def incr(self, key: KeyT, value: int, /, noreply: bool = False) -> int | None:
@@ -162,8 +158,8 @@ class Client(Generic[AnyStr]):
     async def delete(self, key: KeyT, /, noreply: bool = False) -> bool:
         return await self.execute_command(DeleteCommand(key, noreply))
 
-    async def flushall(self, exptime: int = 0, /, noreply: bool = False) -> bool:
-        return await self.execute_command(FlushAllCommand(exptime, noreply))
+    async def flushall(self, expiry: int = 0, /, noreply: bool = False) -> bool:
+        return await self.execute_command(FlushAllCommand(expiry, noreply))
 
     async def stats(self, arg: str | None = None) -> dict[AnyStr, AnyStr]:
         return await self.execute_command(

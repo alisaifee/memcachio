@@ -2,12 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from memcachio.utils import decodedstr
-
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from memcachio.types import KeyT
+    pass
 
 
 class MemcachedError(Exception):
