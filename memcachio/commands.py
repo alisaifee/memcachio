@@ -242,7 +242,10 @@ class ArithmenticCommand(SingleKeyCommand[int | None]):
         super().__init__(key, noreply)
 
     def build_request_parameters(self) -> bytes:
-        return f"{decodedstr(self._key)} {self._amount}".encode()
+        request = f"{decodedstr(self._key)} {self._amount}"
+        if self.noreply:
+            request += " noreply"
+        return request.encode("utf-8")
 
     def parse(self, data: BytesIO) -> int | None:
         response = data.readline()

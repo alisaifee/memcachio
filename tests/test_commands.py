@@ -45,6 +45,8 @@ class TestCommands:
         assert await client.incr("key", 1) is None
         assert await client.set("key", 1)
         assert 2 == await client.incr("key", 1)
+        assert await client.incr("key", 1, noreply=True) is None
+        assert 4 == await client.incr("key", 1)
 
         with pytest.raises(ClientError, match="invalid numeric delta"):
             await client.incr("key", pow(2, 64))
@@ -55,7 +57,9 @@ class TestCommands:
 
     async def test_decr(self, client: memcachio.Client):
         assert await client.decr("key", 1) is None
-        assert await client.set("key", 1)
+        assert await client.set("key", 3)
+        assert 2 == await client.decr("key", 1)
+        assert await client.decr("key", 1, noreply=True) is None
         assert 0 == await client.decr("key", 1)
 
         with pytest.raises(ClientError, match="invalid numeric delta"):
