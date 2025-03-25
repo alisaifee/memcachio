@@ -167,4 +167,4 @@ class TestCommands:
 
     async def test_version(self, client: memcachio.Client):
         version = await client.version()
-        assert re.match("\d+.\d+.\d+", version)
+        assert re.match(r"\d+.\d+.\d+", version)
