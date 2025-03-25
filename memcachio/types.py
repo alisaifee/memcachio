@@ -24,4 +24,4 @@ class MemcachedItem(Generic[AnyStr]):
     flags: int
     size: int
     cas: int | None
-    data: AnyStr
+    value: AnyStr

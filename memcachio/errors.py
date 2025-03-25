@@ -18,11 +18,6 @@ class ClientError(MemcachedError):
     pass
 
 
-class NotStored(MemcachedError):
-    def __init__(self, keys: Sequence[KeyT]) -> None:
-        super().__init__(f"{' '.join([decodedstr(k) for k in keys])} not stored")
-
-
 class NotEnoughData(Exception):
     def __init__(self, data_read: int):
         self.data_read = data_read

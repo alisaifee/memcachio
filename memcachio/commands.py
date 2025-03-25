@@ -179,10 +179,10 @@ class GenericStoreCommand(BasicResponseCommand, SingleKeyCommand[bool]):
         self,
         key: KeyT,
         value: ValueT,
-        flags: int,
-        exptime: int,
-        noreply: bool,
         /,
+        flags: int | None = None,
+        exptime: int = 0,
+        noreply: bool = False,
         cas: int | None = None,
         encoding: str = "utf-8",
     ) -> None:
@@ -194,7 +194,7 @@ class GenericStoreCommand(BasicResponseCommand, SingleKeyCommand[bool]):
         super().__init__(key, noreply)
 
     def build_request_parameters(self) -> bytes:
-        header = f"{decodedstr(self.key)} {self.flags} {self.exptime}"
+        header = f"{decodedstr(self.key)} {self.flags or 0} {self.exptime}"
         header += f" {len(self.value)}"
         if self.cas is not None:
             header += f" {self.cas}"

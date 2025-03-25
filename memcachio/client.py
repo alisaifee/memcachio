@@ -21,7 +21,6 @@ from memcachio.commands import (
     StatsCommand,
     VersionCommand,
 )
-from memcachio.errors import NotStored
 from memcachio.pool import Pool
 
 if TYPE_CHECKING:
@@ -129,12 +128,9 @@ class Client(Generic[AnyStr]):
     async def add(
         self, key: KeyT, value: ValueT, /, flags: int = 0, exptime: int = 0, noreply: bool = False
     ) -> bool:
-        try:
-            return await self.execute_command(
-                AddCommand(key, value, flags, exptime, noreply, encoding=self.encoding)
-            )
-        except NotStored:
-            return False
+        return await self.execute_command(
+            AddCommand(key, value, flags, exptime, noreply, encoding=self.encoding)
+        )
 
     async def append(
         self, key: KeyT, value: ValueT, /, flags: int = 0, exptime: int = 0, noreply: bool = False
@@ -144,10 +140,10 @@ class Client(Generic[AnyStr]):
         )
 
     async def prepend(
-        self, key: KeyT, value: ValueT, /, flags: int = 0, exptime: int = 0, noreply: bool = False
+        self, key: KeyT, value: ValueT, /, noreply: bool = False
     ) -> bool:
         return await self.execute_command(
-            PrependCommand(key, value, flags, exptime, noreply, encoding=self.encoding)
+            PrependCommand(key, value, noreply=noreply, encoding=self.encoding)
         )
 
     async def replace(

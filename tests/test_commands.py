@@ -27,9 +27,54 @@ class TestCommands:
             *values.keys(), "no-key"
         )
 
+    async def test_gets(self, client: memcachio.Client):
+        assert {} == await client.get("not-exist")
+        assert await client.set("exists", 1)
+        assert (await client.gets("exists")).get(b"exists").cas is not None
+
+    async def test_gets_many(self, client: memcachio.Client):
+        values = {f"key-{i}": i for i in range(100)}
+        assert {} == await client.gets(*values.keys())
+        for key, value in values.items():
+            assert await client.set(key, value)
+        cass = [value.cas for _, value in (await client.gets(*values.keys())).items()]
+        assert len(cass) == 100
+        assert not any(cas is None for cas in cass)
+
+    async def test_gat(self, client: memcachio.Client):
+        assert {} == await client.gat("not-exist", exptime=1)
+        assert await client.set("exists", 1)
+        assert {b"exists": ANY} == await client.gat("exists", exptime=1)
+        await asyncio.sleep(1)
+        assert {} == await client.get("exists")
+
+    async def test_gat_many(self, client: memcachio.Client):
+        values = {f"key-{i}": i for i in range(100)}
+        assert {} == await client.gat(*values.keys(), exptime=1)
+        for key, value in values.items():
+            assert await client.set(key, value)
+        assert len((await client.gat(*values.keys(), exptime=1)).items()) == 100
+        await asyncio.sleep(1)
+        assert len((await client.gat(*values.keys(), exptime=1)).items()) == 0
+
+    async def test_gats(self, client: memcachio.Client):
+        assert {} == await client.gats("not-exist", exptime=1)
+        assert await client.set("exists", 1)
+        assert (await client.gats("exists", exptime=1)).get(b"exists").cas is not None
+        assert {} == await client.gats("exist", exptime=1)
+
+    async def test_gats_many(self, client: memcachio.Client):
+        values = {f"key-{i}": i for i in range(100)}
+        assert {} == await client.gats(*values.keys(), exptime=1)
+        for key, value in values.items():
+            assert await client.set(key, value)
+        assert len((await client.gats(*values.keys(), exptime=1)).items()) == 100
+        await asyncio.sleep(1)
+        assert len((await client.gats(*values.keys(), exptime=1)).items()) == 0
+
     async def test_set(self, client: memcachio.Client):
         assert await client.set("key", 1)
-        assert (await client.get("key")).get(b"key").data == b"1"
+        assert (await client.get("key")).get(b"key").value == b"1"
 
         assert await client.set("key", 2, 1)
         assert (await client.get("key")).get(b"key").flags == 1
@@ -39,7 +84,54 @@ class TestCommands:
         assert not await client.get("key")
 
         assert None is await client.set("key", 4, noreply=True)
-        assert (await client.get("key")).get(b"key").data == b"4"
+        assert (await client.get("key")).get(b"key").value == b"4"
+
+    async def test_cas(self, client: memcachio.Client):
+        assert await client.set("key", 1)
+        cas = (await client.gets("key")).get(b"key").cas
+        assert cas is not None
+        assert not await client.cas("key", 2, cas + 1)
+        assert await client.cas("key", 2, cas)
+        item = (await client.gets("key")).get(b"key")
+        assert item.cas != cas
+        assert item.value == b"2"
+
+    async def test_add(self, client: memcachio.Client):
+        assert await client.set("key", 1)
+        assert not await client.add("key", 2)
+        assert await client.add("newkey", 2)
+        item = (await client.get("newkey")).get(b"newkey")
+        assert item.value == b"2"
+
+    async def test_append(self, client: memcachio.Client):
+        assert not await client.append("key", "o")
+        assert await client.set("key", "fo")
+        assert await client.append("key", "o")
+        item = (await client.get("key")).get(b"key")
+        assert item.value == b"foo"
+
+    async def test_prepend(self, client: memcachio.Client):
+        assert not await client.prepend("key", "f")
+        assert await client.set("key", "oo")
+        assert await client.prepend("key", "f")
+        item = (await client.get("key")).get(b"key")
+        assert item.value == b"foo"
+
+    async def test_replace(self, client: memcachio.Client):
+        assert not await client.replace("key", 1)
+        assert await client.set("key", 1)
+        item = (await client.get("key")).get(b"key")
+        assert item.value == b"1"
+        assert await client.replace("key", 2, exptime=1)
+        item = (await client.get("key")).get(b"key")
+        assert item.value == b"2"
+        await asyncio.sleep(1)
+        assert {} == await client.get("key")
+
+    async def test_delete(self, client: memcachio.Client):
+        assert await client.set("key", 1)
+        assert not await client.delete("no-key")
+        assert await client.delete("key")
 
     async def test_incr(self, client: memcachio.Client):
         assert await client.incr("key", 1) is None
