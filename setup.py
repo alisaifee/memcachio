@@ -47,9 +47,9 @@ if not PURE_PYTHON and USE_MYPYC:
     from mypyc.build import mypycify
 
     extensions += mypycify(
-        ["memcachio/commands.py"]
-        # debug_level="0",
-        # strip_asserts=True,
+        [],
+        debug_level="0",
+        strip_asserts=True,
     )
     for ext in extensions:
         if "-Werror" in ext.extra_compile_args:

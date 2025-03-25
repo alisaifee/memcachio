@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from unittest.mock import ANY
 
 import pytest
@@ -67,3 +68,7 @@ class TestCommands:
     async def test_stats(self, client: memcachio.Client):
         assert b"bytes_read" in await client.stats()
         assert b"active_slabs" in await client.stats("slabs")
+
+    async def test_version(self, client: memcachio.Client):
+        version = await client.version()
+        assert re.match("\d+.\d+.\d+", version)
