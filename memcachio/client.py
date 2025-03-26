@@ -19,6 +19,7 @@ from memcachio.commands import (
     ReplaceCommand,
     SetCommand,
     StatsCommand,
+    TouchCommand,
     VersionCommand,
 )
 from memcachio.pool import Pool
@@ -157,6 +158,9 @@ class Client(Generic[AnyStr]):
 
     async def delete(self, key: KeyT, /, noreply: bool = False) -> bool:
         return await self.execute_command(DeleteCommand(key, noreply))
+
+    async def touch(self, key: KeyT, expiry: int, /, noreply: bool = False) -> bool:
+        return await self.execute_command(TouchCommand(key, expiry, noreply))
 
     async def flushall(self, expiry: int = 0, /, noreply: bool = False) -> bool:
         return await self.execute_command(FlushAllCommand(expiry, noreply))

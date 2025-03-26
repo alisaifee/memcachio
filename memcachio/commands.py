@@ -77,10 +77,6 @@ class SingleKeyCommand(Command[R]):
     def key(self) -> str:
         return decodedstr(self._key)
 
-    def build_request_parameters(self) -> bytes:
-        assert self.key
-        return bytestr(self.key) + LINE_END
-
 
 class NoKeyCommand(Command[R]):
     pass
@@ -270,10 +266,26 @@ class DeleteCommand(BasicResponseCommand, SingleKeyCommand[bool]):
     name = Commands.DELETE
     success = Responses.DELETED
 
+    def build_request_parameters(self) -> bytes:
+        request = bytestr(self.key)
+        if self.noreply:
+            request += b" noreply"
+        return request
+
 
 class TouchCommand(BasicResponseCommand, SingleKeyCommand[bool]):
     name = Commands.TOUCH
     success = Responses.TOUCHED
+
+    def __init__(self, key: KeyT, expiry: int, noreply: bool) -> None:
+        self.expiry = expiry
+        super().__init__(key, noreply)
+
+    def build_request_parameters(self) -> bytes:
+        request = f"{self.key} {self.expiry}".encode("utf-8")
+        if self.noreply:
+            request += b" noreply"
+        return request
 
 
 class FlushAllCommand(BasicResponseCommand, NoKeyCommand[bool]):

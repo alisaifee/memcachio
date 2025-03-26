@@ -133,6 +133,12 @@ class TestCommands:
         assert not await client.delete("no-key")
         assert await client.delete("key")
 
+    async def test_touch(self, client: memcachio.Client):
+        assert await client.set("key", 1)
+        assert await client.touch("key", 1)
+        await asyncio.sleep(1)
+        assert not await client.delete("key")
+
     async def test_incr(self, client: memcachio.Client):
         assert await client.incr("key", 1) is None
         assert await client.set("key", 1)
