@@ -92,7 +92,9 @@ class BasicResponseCommand(Command[bool]):
     def parse(self, data: BytesIO) -> bool:
         response = data.readline()
         self.check_header(response)
-        return response.rstrip() == self.success.value
+        if not response.rstrip() == self.success.value:
+            return False
+        return True
 
 
 class GetCommand(MultiKeyCommand[dict[AnyStr, MemcachedItem[AnyStr]]]):
@@ -125,6 +127,8 @@ class GetCommand(MultiKeyCommand[dict[AnyStr, MemcachedItem[AnyStr]]]):
             size = int(parts[3])
             cas = int(parts[4]) if len(parts) > 4 else None
             value = data.read(size)
+            if len(value) != size:
+                raise NotEnoughData(len(value) + len(header))
             item = MemcachedItem[AnyStr](
                 cast(AnyStr, decodedstr(key, self.encoding) if self.decode_responses else key),
                 flags,
@@ -132,8 +136,6 @@ class GetCommand(MultiKeyCommand[dict[AnyStr, MemcachedItem[AnyStr]]]):
                 cas,
                 cast(AnyStr, decodedstr(value, self.encoding) if self.decode_responses else value),
             )
-            if len(value) != size:
-                raise NotEnoughData(len(value) + len(header))
             data.read(2)
             self.items.append(item)
         return {i.key: i for i in self.items}

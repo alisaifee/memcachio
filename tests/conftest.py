@@ -87,7 +87,7 @@ def dragonfly(docker_services):
 
 @pytest.fixture
 async def memcached_tcp_client(memcached_1, request):
-    client = memcachio.Client(TCPLocator(*memcached_1))
+    client = memcachio.Client(memcached_1)
     await client.flushall()
     yield client
     await client.connection_pool.close()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, AsyncContextManager, Type, TypeVar
+from typing import Any, Type, TypeVar
 
 from memcachio.commands import Command, MultiKeyCommand, NoKeyCommand, SingleKeyCommand
 from memcachio.connection import (
@@ -13,9 +13,12 @@ from memcachio.connection import (
     UnixSocketConnection,
 )
 from memcachio.routing import KeyRouter
-
-if TYPE_CHECKING:
-    from memcachio.types import ServerLocator, SingleServerLocator
+from memcachio.types import (
+    ServerLocator,
+    SingleServerLocator,
+    UnixSocketLocator,
+    is_single_server,
+)
 
 R = TypeVar("R")
 
@@ -25,13 +28,15 @@ class Pool(ABC):
         self,
         locator: ServerLocator,
         max_connections: int = 2,
+        blocking_timeout: int = 30,
         connect_timeout: float | None = None,
         read_timeout: float | None = None,
-        socket_keepalive: bool | None = None,
+        socket_keepalive: bool | None = True,
         socket_keepalive_options: dict[int, int | bytes] | None = None,
     ):
         self._locator = locator
         self._max_connections = max_connections
+        self._blocking_timeout = blocking_timeout
         self._connection_parameters: ConnectionParams = {
             "connect_timeout": connect_timeout,
             "read_timeout": read_timeout,
@@ -54,10 +59,10 @@ class Pool(ABC):
         read_timeout: float | None,
     ) -> Pool:
         kls: Type[Pool]
-        if isinstance(locator, list):
-            kls = ClusterPool
-        else:
+        if is_single_server(locator):
             kls = SingleServerPool
+        else:
+            kls = ClusterPool
 
         return kls(
             locator,
@@ -67,93 +72,87 @@ class Pool(ABC):
         )
 
 
-class SingleServerPoolConnectionContextManager(AsyncContextManager[BaseConnection]):
-    def __init__(self, pool: SingleServerPool, connection: BaseConnection) -> None:
-        self._pool = pool
-        self._connection = connection
-        self._quick_release = False
-
-    async def __aenter__(self) -> BaseConnection:
-        return self._connection
-
-    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        await self._pool.release(self._connection)
-
-
 class SingleServerPool(Pool):
     def __init__(
         self,
         locator: SingleServerLocator,
         max_connections: int = 2,
+        blocking_timeout: int = 30,
         connect_timeout: float | None = None,
         read_timeout: float | None = None,
-        socket_keepalive: bool | None = None,
+        socket_keepalive: bool | None = True,
         socket_keepalive_options: dict[int, int | bytes] | None = None,
     ) -> None:
         super().__init__(
             locator,
             max_connections,
+            blocking_timeout,
             connect_timeout,
             read_timeout,
             socket_keepalive,
             socket_keepalive_options,
         )
         self._total_connections: int = 0
-        self._connections: asyncio.Queue[BaseConnection] = asyncio.Queue(self._max_connections)
+        self._connections: asyncio.Queue[BaseConnection | None] = asyncio.LifoQueue(
+            self._max_connections
+        )
         self._pool_lock: asyncio.Lock = asyncio.Lock()
         self._connection_class: Type[TCPConnection | UnixSocketConnection]
         self._connect_failed: int = 0
         self._initialized = False
-        self._connection = None
+        while True:
+            try:
+                self._connections.put_nowait(None)
+            except asyncio.QueueFull:
+                break
 
     async def execute_command(self, command: Command[R]) -> R:
-        async with await self.acquire(command) as connection:
-            request = await connection.create_request(command)
-        return await request
+        connection = await self.acquire(command)
+        request = await connection.create_request(command)
+        norelease = False
+        if connection.happy():
+            norelease = True
+            self._connections.put_nowait(connection)
+        response = await request
+        if not norelease:
+            self._connections.put_nowait(connection)
+        return response
 
     async def _create_connection(self) -> BaseConnection:
         connection: BaseConnection | None = None
-        if isinstance(self._locator, tuple):
-            connection = TCPConnection(self._locator, **self._connection_parameters)
-        elif isinstance(self._locator, str):
-            connection = UnixSocketConnection(self._locator, **self._connection_parameters)
+        self._total_connections += 1
+        if is_single_server(self._locator):
+            if isinstance(self._locator, UnixSocketLocator):
+                connection = UnixSocketConnection(self._locator, **self._connection_parameters)
+            else:
+                connection = TCPConnection(self._locator, **self._connection_parameters)
         assert connection
         try:
             await connection.connect()
-        except OSError:
+        except:
             self._connect_failed += 1
             raise
         return connection
 
     async def initialize(self) -> None:
-        async with self._pool_lock:
-            if self._initialized:
-                return
-            await self._connections.put(await self._create_connection())
-            self._total_connections += 1
-            self._initialized = True
+        self._initialized = True
 
-    async def acquire(self, command: Command[Any]) -> AsyncContextManager[BaseConnection]:
-        await self.initialize()
-        async with self._pool_lock:
-            try:
-                connection = self._connections.get_nowait()
-            except asyncio.QueueEmpty:
-                if self._total_connections < self._max_connections:
+    async def acquire(self, command: Command[Any]) -> BaseConnection:
+        try:
+            async with asyncio.timeout(self._blocking_timeout):
+                connection = await self._connections.get()
+                if not connection:
+                    print("creating")
                     connection = await self._create_connection()
-                    self._total_connections += 1
-                else:
-                    connection = await self._connections.get()
-            return SingleServerPoolConnectionContextManager(self, connection)
-
-    async def release(self, connection: BaseConnection) -> None:
-        await self._connections.put(connection)
+            return connection
+        except asyncio.TimeoutError:
+            raise
 
     async def close(self) -> None:
         while True:
             try:
-                connection = self._connections.get_nowait()
-                connection.disconnect()
+                if connection := self._connections.get_nowait():
+                    connection.disconnect()
             except asyncio.QueueEmpty:
                 break
 
@@ -168,10 +167,11 @@ class ClusterPool(Pool):
     def __init__(
         self,
         locator: list[SingleServerLocator],
-        max_connections: int,
+        max_connections: int = 2,
+        blocking_timeout: int = 30,
         connect_timeout: float | None = None,
         read_timeout: float | None = None,
-        socket_keepalive: bool | None = None,
+        socket_keepalive: bool | None = True,
         socket_keepalive_options: dict[int, int | bytes] | None = None,
     ) -> None:
         self._cluster_pools: dict[SingleServerLocator, SingleServerPool] = {}
@@ -180,6 +180,7 @@ class ClusterPool(Pool):
         super().__init__(
             locator,
             max_connections,
+            blocking_timeout,
             connect_timeout,
             read_timeout,
             socket_keepalive,

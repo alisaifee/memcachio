@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from .client import Client
+from .types import ServerLocator, TCPLocator
 
-__all__ = ["Client"]
+__all__ = ["Client", "TCPLocator", "ServerLocator"]
 
 from . import _version
 
