@@ -11,6 +11,15 @@ services:
     image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
     ports:
       - 33213:11211
+  memcached-ssl:
+    image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
+    command: -vvv -Z -o ssl_chain_cert=/tls/server-cert.pem,ssl_key=/tls/server-key.pem
+    ports:
+      - 33214:11211
+    volumes:
+      - type: bind
+        source: ./tests/tls
+        target: /tls/
   memcached-uds:
     image: "memcached:${MEMCACHIO_MEMCACHED_VERSION:-latest}"
     command: sh -c "test ${HOST_OS} = \"Darwin\" && exit || memcached -s /sockets/memcachio.sock -a 777"
