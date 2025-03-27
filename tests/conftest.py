@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import platform
 import socket
+import ssl
 
 import pytest
 from pytest_lazy_fixtures import lf
@@ -55,21 +56,33 @@ def docker_services(host_ip_env, docker_services):
 def memcached_1(docker_services):
     docker_services.start("memcached-1")
     docker_services.wait_for_service("memcached-1", 11211, ping_socket)
-    yield ["localhost", 33211]
+    yield ("localhost", 33211)
 
 
 @pytest.fixture(scope="session")
 def memcached_2(docker_services):
     docker_services.start("memcached-2")
     docker_services.wait_for_service("memcached-2", 11211, ping_socket)
-    yield ["localhost", 33212]
+    yield ("localhost", 33212)
 
 
 @pytest.fixture(scope="session")
 def memcached_3(docker_services):
     docker_services.start("memcached-3")
     docker_services.wait_for_service("memcached-3", 11211, ping_socket)
-    yield ["localhost", 33213]
+    yield ("localhost", 33213)
+
+
+@pytest.fixture(scope="session")
+def memcached_cluster(memcached_1, memcached_2, memcached_3):
+    yield (memcached_1, memcached_2, memcached_3)
+
+
+@pytest.fixture(scope="session")
+def memcached_ssl(docker_services):
+    docker_services.start("memcached-ssl")
+    docker_services.wait_for_service("memcached-ssl", 11211, ping_socket)
+    yield ("localhost", 33214)
 
 
 @pytest.fixture(scope="session")
@@ -78,19 +91,23 @@ def memcached_uds(docker_services):
     yield "/tmp/memcachio.sock"
 
 
-@pytest.fixture(scope="session")
-def dragonfly(docker_services):
-    docker_services.start("dragonfly")
-    docker_services.wait_for_service("dragonfly", 11211, ping_socket)
-    yield ["localhost", 33311]
-
-
 @pytest.fixture
 async def memcached_tcp_client(memcached_1, request):
     client = memcachio.Client(memcached_1)
     await client.flushall()
     yield client
-    await client.connection_pool.close()
+    client.connection_pool.close()
+
+
+@pytest.fixture
+async def memcached_ssl_client(memcached_ssl, request):
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.VerifyMode.CERT_NONE
+    client = memcachio.Client(memcached_ssl, ssl_context=ssl_context)
+    await client.flushall()
+    yield client
+    client.connection_pool.close()
 
 
 @pytest.fixture
@@ -100,7 +117,7 @@ async def memcached_uds_client(memcached_uds, request):
     client = memcachio.Client(memcached_uds)
     await client.flushall()
     yield client
-    await client.connection_pool.close()
+    client.connection_pool.close()
 
 
 @pytest.fixture
@@ -110,7 +127,7 @@ async def memcached_tcp_cluster_client(memcached_1, memcached_2, memcached_3, re
     )
     await client.flushall()
     yield client
-    await client.connection_pool.close()
+    client.connection_pool.close()
 
 
 @pytest.fixture(scope="session")
