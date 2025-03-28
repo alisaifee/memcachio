@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AnyStr, Generic, NamedTuple, Sequence, TypeGuard
+from typing import AnyStr, Generic, NamedTuple, Sequence, TypeGuard, cast
 
 KeyT = str | bytes
 ValueT = str | bytes | int
@@ -15,7 +15,7 @@ class TCPLocator(NamedTuple):
     port: int
 
 
-SingleServerLocator = UnixSocketLocator | TCPLocator
+SingleServerLocator = UnixSocketLocator | TCPLocator | tuple[str, int]
 ServerLocator = SingleServerLocator | Sequence[SingleServerLocator]
 
 
@@ -30,6 +30,22 @@ def is_single_server(locator: ServerLocator) -> TypeGuard[SingleServerLocator]:
     ):
         return True
     return False
+
+
+def normalize_single_server_locator(locator: SingleServerLocator) -> SingleServerLocator:
+    if not isinstance(locator, UnixSocketLocator):
+        return TCPLocator(*locator)
+    return locator
+
+
+def normalize_locator(locator: ServerLocator) -> ServerLocator:
+    if is_single_server(locator):
+        return normalize_single_server_locator(locator)
+    else:
+        return [
+            normalize_single_server_locator(single)
+            for single in cast(Sequence[SingleServerLocator], locator)
+        ]
 
 
 @dataclass

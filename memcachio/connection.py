@@ -18,7 +18,8 @@ from asyncio import (
 from collections import deque
 from io import BytesIO
 from pathlib import Path
-from typing import NotRequired, TypedDict, TypeVar, cast
+from ssl import SSLContext
+from typing import NotRequired, TypedDict, TypeVar, Unpack, cast
 
 from memcachio.commands import Command
 from memcachio.errors import MemcachedError, NotEnoughData
@@ -33,6 +34,8 @@ class ConnectionParams(TypedDict):
     read_timeout: float | None
     socket_keepalive: NotRequired[bool | None]
     socket_keepalive_options: NotRequired[dict[int, int | bytes] | None]
+    max_inflight_requests_per_connection: NotRequired[int | None]
+    ssl_context: NotRequired[SSLContext | None]
 
 
 @dataclasses.dataclass
@@ -48,15 +51,22 @@ class Request:
     created_at: float = dataclasses.field(default_factory=lambda: time.time())
 
     def __post_init__(self) -> None:
+        self.connection.metrics.requests_pending += 1
         self.future.add_done_callback(self.cleanup)
 
     def cleanup(self, future: Future) -> None:  # type: ignore[type-arg]
-        self.connection.metrics.last_request_processed = time.time()
+        metrics = self.connection.metrics
+        metrics.last_request_processed = time.time()
+        metrics.requests_pending -= 1
         if future.done() and not future.cancelled():
             if not self.future.exception():
-                self.connection.metrics.requests_processed += 1
+                metrics.requests_processed += 1
+                metrics.average_response_time = (
+                    (time.time() - self.created_at)
+                    + metrics.average_response_time * (metrics.requests_processed - 1)
+                ) / metrics.requests_processed
             else:
-                self.connection.metrics.requests_failed += 1
+                metrics.requests_failed += 1
 
     def enforce_deadline(self, timeout: float) -> None:
         if not self.future.done():
@@ -72,9 +82,11 @@ class ConnectionMetrics:
     created_at: float = dataclasses.field(default_factory=lambda: time.time())
     requests_processed: int = 0
     requests_failed: int = 0
-    last_written: float = 0
-    last_read: float = 0
-    last_request_processed: float = 0
+    last_written: float = 0.0
+    last_read: float = 0.0
+    last_request_processed: float = 0.0
+    average_response_time: float = 0.0
+    requests_pending: int = 0
 
 
 class BaseConnection(BaseProtocol, ABC):
@@ -88,29 +100,38 @@ class BaseConnection(BaseProtocol, ABC):
         socket_keepalive_options: dict[int, int | bytes] | None = None,
         connect_timeout: float | None = None,
         read_timeout: float | None = None,
-        max_inflight_requests: int | None = None,
+        max_inflight_requests_per_connection: int | None = None,
+        ssl_context: SSLContext | None = None,
     ) -> None:
+        self._connect_timeout: float | None = connect_timeout
+        self._read_timeout: float | None = read_timeout
+        self._socket_keepalive: bool | None = socket_keepalive
+        self._socket_keepalive_options: dict[int, int | bytes] = socket_keepalive_options or {}
+        self._max_inflight_requests_per_connection = max_inflight_requests_per_connection or 10
+        self._ssl_context: SSLContext | None = ssl_context
+        self._last_error: Exception | None = None
         self._transport: Transport | None = None
         self._buffer = BytesIO()
         self._request_queue: deque[Request] = deque()
         self._write_ready: Event = Event()
         self._transport_lock: Lock = Lock()
         self._request_lock: Lock = Lock()
-        self._connect_timeout: float | None = connect_timeout
-        self._read_timeout: float | None = read_timeout
-        self._socket_keepalive: bool | None = socket_keepalive
-        self._socket_keepalive_options: dict[int, int | bytes] = socket_keepalive_options or {}
-        self._max_inflight_requests = max_inflight_requests or 1000
-        self._last_error: Exception | None = None
         self.metrics: ConnectionMetrics = ConnectionMetrics()
 
     @abstractmethod
     async def connect(self) -> None: ...
 
-    def happy(self) -> bool:
-        if not self._transport:
+    @property
+    def connected(self) -> bool:
+        return self._transport is not None and self._write_ready.is_set()
+
+    def reusable(self) -> bool:
+        if not self.connected:
             return False
-        return len(self._request_queue) < self._max_inflight_requests
+        return (
+            len(self._request_queue) < self._max_inflight_requests_per_connection
+            and self.metrics.average_response_time < 0.01
+        )
 
     async def send(self, data: bytes) -> None:
         assert self._transport
@@ -119,6 +140,7 @@ class BaseConnection(BaseProtocol, ABC):
         self.metrics.last_written = time.time()
 
     def disconnect(self) -> None:
+        self._write_ready.clear()
         if self._transport:
             try:
                 self._transport.close()
@@ -134,6 +156,7 @@ class BaseConnection(BaseProtocol, ABC):
                     )
             except IndexError:
                 break
+        self.metrics = ConnectionMetrics()
         self._transport = None
 
     async def create_request(self, command: Command[R]) -> Future[R]:
@@ -141,29 +164,29 @@ class BaseConnection(BaseProtocol, ABC):
             weakref.proxy(self),
             command,
         )
-        await self.send(command.build())
-        if not command.noreply:
-            self._request_queue.append(request)
-            if self._read_timeout is not None:
-                request.enforce_deadline(self._read_timeout)
-            future = request.future
-        else:
-            future = asyncio.Future()
-            future.set_result(None)
+        async with self._request_lock:
+            if not self.connected:
+                await self.connect()
+            await self.send(command.build())
+            if not command.noreply:
+                self._request_queue.append(request)
+                if self._read_timeout is not None:
+                    request.enforce_deadline(self._read_timeout)
+                future = request.future
+            else:
+                future = asyncio.Future()
+                future.set_result(None)
         return future
 
     def connection_made(self, transport: BaseTransport) -> None:
         self._transport = cast(Transport, transport)
         if (sock := self._transport.get_extra_info("socket")) is not None:
             try:
-                # TCP_KEEPALIVE
                 if self._socket_keepalive:
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
                     for k, v in self._socket_keepalive_options.items():
                         sock.setsockopt(socket.SOL_TCP, k, v)
             except (OSError, TypeError):
-                # `socket_keepalive_options` might contain invalid options
-                # causing an error
                 transport.close()
                 raise
 
@@ -172,7 +195,6 @@ class BaseConnection(BaseProtocol, ABC):
     def data_received(self, data: bytes) -> None:
         self.metrics.last_read = time.time()
         self._buffer = BytesIO(self._buffer.read() + data)
-        self._buffer.seek(0)
         while self._request_queue:
             request = self._request_queue.popleft()
             try:
@@ -200,18 +222,18 @@ class BaseConnection(BaseProtocol, ABC):
             self._last_error = exc
         self.disconnect()
 
+    def eof_received(self) -> None:
+        self.disconnect()
+
 
 class TCPConnection(BaseConnection):
     def __init__(
         self,
-        host_port: TCPLocator,
-        socket_keepalive: bool | None = True,
-        socket_keepalive_options: dict[int, int | bytes] | None = None,
-        connect_timeout: float | None = None,
-        read_timeout: float | None = None,
+        host_port: TCPLocator | tuple[str, int],
+        **kwargs: Unpack[ConnectionParams],
     ) -> None:
         self._host, self._port = host_port
-        super().__init__(socket_keepalive, socket_keepalive_options, connect_timeout, read_timeout)
+        super().__init__(**kwargs)
 
     async def connect(self) -> None:
         async with self._transport_lock:
@@ -220,28 +242,24 @@ class TCPConnection(BaseConnection):
             try:
                 async with asyncio.timeout(self._connect_timeout):
                     transport, _ = await get_running_loop().create_connection(
-                        lambda: self,
-                        host=self._host,
-                        port=self._port,
+                        lambda: self, host=self._host, port=self._port, ssl=self._ssl_context
                     )
             except TimeoutError:
                 msg = f"Unable to establish a connection within {self._connect_timeout} seconds"
                 raise ConnectionError(
                     msg,
                 )
+        await self._write_ready.wait()
 
 
 class UnixSocketConnection(BaseConnection):
     def __init__(
         self,
         path: UnixSocketLocator,
-        socket_keepalive: bool | None = True,
-        socket_keepalive_options: dict[int, int | bytes] | None = None,
-        connect_timeout: float | None = None,
-        read_timeout: float | None = None,
+        **kwargs: Unpack[ConnectionParams],
     ) -> None:
         self._path = str(Path(path).expanduser().absolute())
-        super().__init__(socket_keepalive, socket_keepalive_options, connect_timeout, read_timeout)
+        super().__init__(**kwargs)
 
     async def connect(self) -> None:
         async with self._transport_lock:
@@ -257,16 +275,4 @@ class UnixSocketConnection(BaseConnection):
                 raise ConnectionError(
                     msg,
                 )
-            if (sock := transport.get_extra_info("socket")) is not None:
-                try:
-                    # TCP_KEEPALIVE
-                    if self._socket_keepalive:
-                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-
-                        for k, v in self._socket_keepalive_options.items():
-                            sock.setsockopt(socket.SOL_TCP, k, v)
-                except (OSError, TypeError):
-                    # `socket_keepalive_options` might contain invalid options
-                    # causing an error
-                    transport.close()
-                    raise
+        await self._write_ready.wait()

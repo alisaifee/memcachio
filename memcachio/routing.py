@@ -19,14 +19,14 @@ def md5_hasher(key: str) -> int:
 class KeyRouter:
     def __init__(
         self,
-        nodes: list[SingleServerLocator] | None = None,
+        nodes: set[SingleServerLocator] | None = None,
         hasher: Callable[[str], int] | None = None,
     ) -> None:
         self.ring: dict[int, SingleServerLocator] = {}
         self._sorted_keys: list[int] = []
         self._hasher = hasher or md5_hasher
         self._spread = 3
-        for node in nodes or []:
+        for node in nodes or set():
             self.add_node(node)
 
     def add_node(self, node: SingleServerLocator) -> None:

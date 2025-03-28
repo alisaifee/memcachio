@@ -11,7 +11,12 @@ from memcachio.errors import ClientError
 from tests.conftest import targets
 
 
-@targets("memcached_tcp_client", "memcached_tcp_cluster_client", "memcached_uds_client")
+@targets(
+    "memcached_tcp_client",
+    "memcached_ssl_client",
+    "memcached_tcp_cluster_client",
+    "memcached_uds_client",
+)
 class TestCommands:
     async def test_get(self, client: memcachio.Client):
         assert {} == await client.get("not-exist")

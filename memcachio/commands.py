@@ -2,25 +2,25 @@ from __future__ import annotations
 
 import abc
 import copy
-from typing import TYPE_CHECKING, AnyStr, ClassVar, Generic, Self, Sequence, TypeVar, cast
+from io import BytesIO
+from typing import AnyStr, ClassVar, Generic, Self, Sequence, TypeVar, cast
 
 from memcachio.constants import LINE_END, Commands, Responses
 from memcachio.errors import ClientError, MemcachedError, NotEnoughData
 from memcachio.types import KeyT, MemcachedItem, ValueT
 from memcachio.utils import bytestr, decodedstr
 
-if TYPE_CHECKING:
-    from io import BytesIO
-
 R = TypeVar("R")
 
 
 class Command(abc.ABC, Generic[R]):
+    __slots__ = ("noreply", "_keys")
     name: ClassVar[Commands]
-    __slots__ = ("noreply",)
+    readonly: ClassVar[bool] = False
 
-    def __init__(self, noreply: bool):
+    def __init__(self, *keys: KeyT, noreply: bool = False):
         self.noreply = noreply
+        self._keys: list[str] = [decodedstr(key) for key in keys or []]
 
     def build(self) -> bytes:
         request = self.name.value
@@ -29,16 +29,10 @@ class Command(abc.ABC, Generic[R]):
         request += LINE_END
         return request
 
-    @abc.abstractmethod
-    def build_request_parameters(self) -> bytes: ...
-
-    @abc.abstractmethod
-    def parse(self, data: BytesIO) -> R: ...
-
     def merge(self, responses: list[R]) -> R:
         return responses[0]
 
-    def check_header(self, header: bytes) -> None:
+    def _check_header(self, header: bytes) -> None:
         if not header.endswith(LINE_END):
             raise NotEnoughData(len(header))
         response = header.rstrip()
@@ -48,38 +42,20 @@ class Command(abc.ABC, Generic[R]):
             raise MemcachedError(decodedstr(response).strip())
         return None
 
-
-class MultiKeyCommand(Command[R]):
-    __slots__ = ("_keys",)
-
-    def __init__(self, keys: tuple[KeyT, ...], noreply: bool):
-        self._keys = keys
-        super().__init__(noreply)
-
     @property
     def keys(self) -> list[str]:
-        return [decodedstr(k) for k in self._keys]
+        return self._keys
 
     def subset(self, keys: Sequence[KeyT]) -> Self:
         subset = copy.copy(self)
-        subset._keys = tuple(keys)
+        subset._keys = list(decodedstr(key) for key in keys)
         return subset
 
+    @abc.abstractmethod
+    def build_request_parameters(self) -> bytes: ...
 
-class SingleKeyCommand(Command[R]):
-    __slots__ = ("_key",)
-
-    def __init__(self, key: KeyT, noreply: bool):
-        self._key = key
-        super().__init__(noreply)
-
-    @property
-    def key(self) -> str:
-        return decodedstr(self._key)
-
-
-class NoKeyCommand(Command[R]):
-    pass
+    @abc.abstractmethod
+    def parse(self, data: BytesIO) -> R: ...
 
 
 class BasicResponseCommand(Command[bool]):
@@ -87,23 +63,22 @@ class BasicResponseCommand(Command[bool]):
 
     def parse(self, data: BytesIO) -> bool:
         response = data.readline()
-        self.check_header(response)
+        self._check_header(response)
         if not response.rstrip() == self.success.value:
             return False
         return True
 
 
-class GetCommand(MultiKeyCommand[dict[AnyStr, MemcachedItem[AnyStr]]]):
-    name = Commands.GET
+class GetCommand(Command[dict[AnyStr, MemcachedItem[AnyStr]]]):
     __slots__ = ("items", "decode_responses", "encoding")
+    name = Commands.GET
+    readonly = True
 
-    def __init__(
-        self, keys: tuple[KeyT, ...], *, decode: bool = False, encoding: str = "utf-8"
-    ) -> None:
+    def __init__(self, *keys: KeyT, decode: bool = False, encoding: str = "utf-8") -> None:
         self.items: list[MemcachedItem[AnyStr]] = []
         self.decode_responses = decode
         self.encoding = encoding
-        super().__init__(keys, noreply=False)
+        super().__init__(*keys, noreply=False)
 
     def build_request_parameters(self) -> bytes:
         return f"{' '.join(self.keys)}".encode()
@@ -111,8 +86,8 @@ class GetCommand(MultiKeyCommand[dict[AnyStr, MemcachedItem[AnyStr]]]):
     def parse(self, data: BytesIO) -> dict[AnyStr, MemcachedItem[AnyStr]]:
         while True:
             header = data.readline()
-            self.check_header(header)
-            if header == (Responses.END + LINE_END):
+            self._check_header(header)
+            if header.lstrip() == (Responses.END + LINE_END):
                 break
             parts = header.split()
             if len(parts) < 4 or parts[0] != Responses.VALUE:
@@ -151,18 +126,19 @@ class GetsCommand(GetCommand[AnyStr]):
 
 
 class GatCommand(GetCommand[AnyStr]):
+    __slots__ = ("expiry",)
     name = Commands.GAT
+    readonly = False
 
     def __init__(
         self,
-        keys: tuple[KeyT, ...],
-        expiry: int,
-        *,
+        *keys: KeyT,
+        expiry: int = 0,
         decode: bool = False,
         encoding: str = "utf-8",
     ) -> None:
         self.expiry = expiry
-        super().__init__(keys, decode=decode, encoding=encoding)
+        super().__init__(*keys, decode=decode, encoding=encoding)
 
     def build_request_parameters(self) -> bytes:
         return f"{self.expiry} {' '.join(self.keys)}".encode()
@@ -170,14 +146,17 @@ class GatCommand(GetCommand[AnyStr]):
 
 class GatsCommand(GatCommand[AnyStr]):
     name = Commands.GATS
+    readonly = False
 
 
-class GenericStoreCommand(BasicResponseCommand, SingleKeyCommand[bool]):
+class GenericStoreCommand(BasicResponseCommand):
+    __slots__ = ("encoding", "flags", "expiry", "value", "cas")
+
     def __init__(
         self,
         key: KeyT,
         value: ValueT,
-        /,
+        *,
         flags: int | None = None,
         expiry: int = 0,
         noreply: bool = False,
@@ -189,10 +168,10 @@ class GenericStoreCommand(BasicResponseCommand, SingleKeyCommand[bool]):
         self.expiry = expiry
         self.value = bytestr(value, self.encoding)
         self.cas = cas
-        super().__init__(key, noreply)
+        super().__init__(key, noreply=noreply)
 
     def build_request_parameters(self) -> bytes:
-        header = f"{decodedstr(self.key)} {self.flags or 0} {self.expiry}"
+        header = f"{decodedstr(self.keys[0])} {self.flags or 0} {self.expiry}"
         header += f" {len(self.value)}"
         if self.cas is not None:
             header += f" {self.cas}"
@@ -234,20 +213,22 @@ class ReplaceCommand(GenericStoreCommand):
     success = Responses.STORED
 
 
-class ArithmenticCommand(SingleKeyCommand[int | None]):
+class ArithmenticCommand(Command[int | None]):
+    __slots__ = ("amount",)
+
     def __init__(self, key: KeyT, amount: int, noreply: bool) -> None:
-        self._amount = amount
-        super().__init__(key, noreply)
+        self.amount = amount
+        super().__init__(key, noreply=noreply)
 
     def build_request_parameters(self) -> bytes:
-        request = f"{decodedstr(self._key)} {self._amount}"
+        request = f"{decodedstr(self.keys[0])} {self.amount}"
         if self.noreply:
             request += " noreply"
         return request.encode("utf-8")
 
     def parse(self, data: BytesIO) -> int | None:
         response = data.readline()
-        self.check_header(response)
+        self._check_header(response)
         response = response.rstrip()
         if response == Responses.NOT_FOUND:
             return None
@@ -262,39 +243,41 @@ class DecrCommand(ArithmenticCommand):
     name = Commands.DECR
 
 
-class DeleteCommand(BasicResponseCommand, SingleKeyCommand[bool]):
+class DeleteCommand(BasicResponseCommand):
     name = Commands.DELETE
     success = Responses.DELETED
 
     def build_request_parameters(self) -> bytes:
-        request = bytestr(self.key)
+        request = bytestr(self.keys[0])
         if self.noreply:
             request += b" noreply"
         return request
 
 
-class TouchCommand(BasicResponseCommand, SingleKeyCommand[bool]):
+class TouchCommand(BasicResponseCommand):
+    __slots__ = ("expiry",)
     name = Commands.TOUCH
     success = Responses.TOUCHED
 
-    def __init__(self, key: KeyT, expiry: int, noreply: bool) -> None:
+    def __init__(self, key: KeyT, *, expiry: int, noreply: bool) -> None:
         self.expiry = expiry
-        super().__init__(key, noreply)
+        super().__init__(key, noreply=noreply)
 
     def build_request_parameters(self) -> bytes:
-        request = f"{self.key} {self.expiry}".encode("utf-8")
+        request = f"{self.keys[0]} {self.expiry}".encode("utf-8")
         if self.noreply:
             request += b" noreply"
         return request
 
 
-class FlushAllCommand(BasicResponseCommand, NoKeyCommand[bool]):
+class FlushAllCommand(BasicResponseCommand):
+    __slots__ = ("expiry",)
     name = Commands.FLUSH_ALL
     success = Responses.OK
 
     def __init__(self, expiry: int, noreply: bool) -> None:
         self.expiry = expiry
-        super().__init__(noreply)
+        super().__init__(noreply=noreply)
 
     def build_request_parameters(self) -> bytes:
         return bytestr(self.expiry)
@@ -303,7 +286,7 @@ class FlushAllCommand(BasicResponseCommand, NoKeyCommand[bool]):
         return all(results)
 
 
-class VersionCommand(NoKeyCommand[str]):
+class VersionCommand(Command[str]):
     name = Commands.VERSION
 
     def build_request_parameters(self) -> bytes:
@@ -311,11 +294,11 @@ class VersionCommand(NoKeyCommand[str]):
 
     def parse(self, data: BytesIO) -> str:
         response = data.readline()
-        self.check_header(response)
+        self._check_header(response)
         return response.partition(Responses.VERSION)[-1].strip().decode("utf-8")
 
 
-class StatsCommand(NoKeyCommand[dict[AnyStr, AnyStr]]):
+class StatsCommand(Command[dict[AnyStr, AnyStr]]):
     name = Commands.STATS
 
     def __init__(
@@ -324,7 +307,7 @@ class StatsCommand(NoKeyCommand[dict[AnyStr, AnyStr]]):
         self.arg = arg
         self.decode_responses = decode_responses
         self.encoding = encoding
-        super().__init__(False)
+        super().__init__(noreply=False)
 
     def build_request_parameters(self) -> bytes:
         return b"" if not self.arg else bytestr(self.arg)
@@ -333,7 +316,7 @@ class StatsCommand(NoKeyCommand[dict[AnyStr, AnyStr]]):
         stats = {}
         while True:
             section = data.readline()
-            self.check_header(section)
+            self._check_header(section)
             if section.startswith(Responses.END):
                 break
             elif section.startswith(Responses.STAT):
