@@ -19,9 +19,10 @@ from collections import deque
 from io import BytesIO
 from pathlib import Path
 from ssl import SSLContext
-from typing import NotRequired, TypedDict, TypeVar, Unpack, cast
+from typing import Any, Generic, NotRequired, TypedDict, TypeVar, Unpack, cast, overload
 
 from memcachio.commands import Command
+from memcachio.defaults import CONNECT_TIMEOUT, MAX_INFLIGHT_REQUESTS_PER_CONNECTION, READ_TIMEOUT
 from memcachio.errors import MemcachedError, NotEnoughData
 from memcachio.types import TCPLocator, UnixSocketLocator
 from memcachio.utils import decodedstr
@@ -32,20 +33,21 @@ R = TypeVar("R")
 class ConnectionParams(TypedDict):
     connect_timeout: float | None
     read_timeout: float | None
+    socket_nodelay: NotRequired[bool | None]
     socket_keepalive: NotRequired[bool | None]
     socket_keepalive_options: NotRequired[dict[int, int | bytes] | None]
-    max_inflight_requests_per_connection: NotRequired[int | None]
+    max_inflight_requests_per_connection: NotRequired[int]
     ssl_context: NotRequired[SSLContext | None]
 
 
 @dataclasses.dataclass
-class Request:
+class Request(Generic[R]):
     connection: weakref.ProxyType[BaseConnection]
-    command: Command  # type: ignore[type-arg]
+    command: Command[R]
     decode: bool = False
     encoding: str | None = None
     raise_exceptions: bool = True
-    future: Future = dataclasses.field(  # type: ignore[type-arg]
+    future: Future[R] = dataclasses.field(
         default_factory=lambda: get_running_loop().create_future(),
     )
     created_at: float = dataclasses.field(default_factory=lambda: time.time())
@@ -98,21 +100,23 @@ class BaseConnection(BaseProtocol, ABC):
         self,
         socket_keepalive: bool | None = True,
         socket_keepalive_options: dict[int, int | bytes] | None = None,
-        connect_timeout: float | None = None,
-        read_timeout: float | None = None,
-        max_inflight_requests_per_connection: int | None = None,
+        socket_nodelay: bool | None = False,
+        connect_timeout: float | None = CONNECT_TIMEOUT,
+        read_timeout: float | None = READ_TIMEOUT,
+        max_inflight_requests_per_connection: int = MAX_INFLIGHT_REQUESTS_PER_CONNECTION,
         ssl_context: SSLContext | None = None,
     ) -> None:
         self._connect_timeout: float | None = connect_timeout
         self._read_timeout: float | None = read_timeout
+        self._socket_nodelay: bool | None = socket_nodelay
         self._socket_keepalive: bool | None = socket_keepalive
         self._socket_keepalive_options: dict[int, int | bytes] = socket_keepalive_options or {}
-        self._max_inflight_requests_per_connection = max_inflight_requests_per_connection or 10
+        self._max_inflight_requests_per_connection = max_inflight_requests_per_connection
         self._ssl_context: SSLContext | None = ssl_context
         self._last_error: Exception | None = None
         self._transport: Transport | None = None
         self._buffer = BytesIO()
-        self._request_queue: deque[Request] = deque()
+        self._request_queue: deque[Request[Any]] = deque()
         self._write_ready: Event = Event()
         self._transport_lock: Lock = Lock()
         self._request_lock: Lock = Lock()
@@ -144,7 +148,7 @@ class BaseConnection(BaseProtocol, ABC):
         if self._transport:
             try:
                 self._transport.close()
-            except RuntimeError:  # noqa
+            except RuntimeError:
                 pass
 
         while True:
@@ -159,7 +163,13 @@ class BaseConnection(BaseProtocol, ABC):
         self.metrics = ConnectionMetrics()
         self._transport = None
 
-    async def create_request(self, command: Command[R]) -> Future[R]:
+    @overload
+    async def create_request(self, command: Command[R]) -> Future[R]: ...
+    @overload
+    async def create_request(self, command: Command[R], noreply: bool = True) -> Future[None]: ...
+    async def create_request(
+        self, command: Command[R], noreply: bool = False
+    ) -> Future[R] | Future[None]:
         request = Request(
             weakref.proxy(self),
             command,
@@ -168,20 +178,22 @@ class BaseConnection(BaseProtocol, ABC):
             if not self.connected:
                 await self.connect()
             await self.send(command.build())
-            if not command.noreply:
+            if noreply:
+                future: Future[None] = asyncio.Future()
+                future.set_result(None)
+                return future
+            else:
                 self._request_queue.append(request)
                 if self._read_timeout is not None:
                     request.enforce_deadline(self._read_timeout)
-                future = request.future
-            else:
-                future = asyncio.Future()
-                future.set_result(None)
-        return future
+                return request.future
 
     def connection_made(self, transport: BaseTransport) -> None:
         self._transport = cast(Transport, transport)
         if (sock := self._transport.get_extra_info("socket")) is not None:
             try:
+                if self._socket_nodelay:
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 if self._socket_keepalive:
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
                     for k, v in self._socket_keepalive_options.items():

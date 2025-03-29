@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import time
 from abc import ABC, abstractmethod
+from asyncio import Future
 from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from contextlib import suppress
-from ssl import SSLContext
-from typing import Any, Iterable, Type, TypeVar, cast
+from typing import Any, TypeVar, Unpack, cast, overload
 
 from memcachio.commands import Command
 from memcachio.connection import (
@@ -15,10 +16,16 @@ from memcachio.connection import (
     TCPConnection,
     UnixSocketConnection,
 )
+from memcachio.defaults import (
+    BLOCKING_TIMEOUT,
+    IDLE_CONNECTION_TIMEOUT,
+    MAX_CONNECTIONS,
+    PURGE_UNHEALTHY_NODES,
+)
 from memcachio.routing import KeyRouter
 from memcachio.types import (
-    ServerLocator,
-    SingleServerLocator,
+    MemcachedLocator,
+    SingleMemcachedInstanceLocator,
     UnixSocketLocator,
     is_single_server,
     normalize_locator,
@@ -30,54 +37,39 @@ R = TypeVar("R")
 class Pool(ABC):
     def __init__(
         self,
-        locator: ServerLocator,
-        max_connections: int = 2,
-        blocking_timeout: float = 30.0,
-        idle_connection_timeout: float = 5.0,
-        # connection parameters
-        connect_timeout: float | None = None,
-        read_timeout: float | None = None,
-        socket_keepalive: bool | None = True,
-        socket_keepalive_options: dict[int, int | bytes] | None = None,
-        max_inflight_requests_per_connection: int | None = None,
-        ssl_context: SSLContext | None = None,
+        locator: MemcachedLocator,
+        max_connections: int = MAX_CONNECTIONS,
+        blocking_timeout: float = BLOCKING_TIMEOUT,
+        idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
+        **connection_args: Unpack[ConnectionParams],
     ):
         self._locator = normalize_locator(locator)
         self._max_connections = max_connections
         self._blocking_timeout = blocking_timeout
         self._idle_connection_timeout = idle_connection_timeout
-        self._connection_parameters: ConnectionParams = {
-            "connect_timeout": connect_timeout,
-            "read_timeout": read_timeout,
-            "socket_keepalive": socket_keepalive,
-            "socket_keepalive_options": socket_keepalive_options,
-            "max_inflight_requests_per_connection": max_inflight_requests_per_connection,
-            "ssl_context": ssl_context,
-        }
+        self._connection_parameters: ConnectionParams = connection_args
 
     @abstractmethod
     def close(self) -> None: ...
 
-    @abstractmethod
+    @overload
     async def execute_command(self, command: Command[R]) -> R: ...
+    @overload
+    async def execute_command(self, command: Command[R], noreply: bool = ...) -> R | None: ...
+    @abstractmethod
+    async def execute_command(self, command: Command[R], noreply: bool = False) -> R | None: ...
 
     @classmethod
     def from_locator(
         cls,
-        locator: ServerLocator,
-        max_connections: int = 2,
-        blocking_timeout: float = 30,
-        purge_unhealthy_nodes: bool = False,
-        idle_connection_timeout: float = 5.0,
-        # connection parameters
-        connect_timeout: float | None = None,
-        read_timeout: float | None = None,
-        socket_keepalive: bool | None = True,
-        socket_keepalive_options: dict[int, int | bytes] | None = None,
-        max_inflight_requests_per_connection: int | None = None,
-        ssl_context: SSLContext | None = None,
+        locator: MemcachedLocator,
+        max_connections: int = MAX_CONNECTIONS,
+        blocking_timeout: float = BLOCKING_TIMEOUT,
+        purge_unhealthy_nodes: bool = PURGE_UNHEALTHY_NODES,
+        idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
+        **connection_args: Unpack[ConnectionParams],
     ) -> Pool:
-        kls: Type[Pool]
+        kls: type[Pool]
         extra_args = {}
         if is_single_server(locator):
             kls = SingleServerPool
@@ -89,13 +81,8 @@ class Pool(ABC):
             max_connections=max_connections,
             blocking_timeout=blocking_timeout,
             idle_connection_timeout=idle_connection_timeout,
-            connect_timeout=connect_timeout,
-            read_timeout=read_timeout,
-            socket_keepalive=socket_keepalive,
-            socket_keepalive_options=socket_keepalive_options,
-            max_inflight_requests_per_connection=max_inflight_requests_per_connection,
-            ssl_context=ssl_context,
             **extra_args,
+            **connection_args,
         )
 
     def __del__(self) -> None:
@@ -106,35 +93,24 @@ class Pool(ABC):
 class SingleServerPool(Pool):
     def __init__(
         self,
-        locator: SingleServerLocator,
-        max_connections: int = 2,
-        blocking_timeout: float = 30.0,
-        idle_connection_timeout: float = 5.0,
-        # connection parameters
-        connect_timeout: float | None = None,
-        read_timeout: float | None = None,
-        socket_keepalive: bool | None = True,
-        socket_keepalive_options: dict[int, int | bytes] | None = None,
-        max_inflight_requests_per_connection: int | None = None,
-        ssl_context: SSLContext | None = None,
+        locator: SingleMemcachedInstanceLocator,
+        max_connections: int = MAX_CONNECTIONS,
+        blocking_timeout: float = BLOCKING_TIMEOUT,
+        idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
+        **connection_args: Unpack[ConnectionParams],
     ) -> None:
         super().__init__(
             locator,
             max_connections,
             blocking_timeout,
             idle_connection_timeout,
-            connect_timeout=connect_timeout,
-            read_timeout=read_timeout,
-            socket_keepalive=socket_keepalive,
-            socket_keepalive_options=socket_keepalive_options,
-            max_inflight_requests_per_connection=max_inflight_requests_per_connection,
-            ssl_context=ssl_context,
+            **connection_args,
         )
         self._connections: asyncio.Queue[BaseConnection | None] = asyncio.LifoQueue(
             self._max_connections
         )
         self._pool_lock: asyncio.Lock = asyncio.Lock()
-        self._connection_class: Type[TCPConnection | UnixSocketConnection]
+        self._connection_class: type[TCPConnection | UnixSocketConnection]
         self._connect_failed: int = 0
         self._initialized = False
         self._monitor_task: asyncio.Task[None] | None = None
@@ -145,12 +121,20 @@ class SingleServerPool(Pool):
             except asyncio.QueueFull:
                 break
 
-    async def execute_command(self, command: Command[R]) -> R:
+    @overload
+    async def execute_command(self, command: Command[R]) -> R: ...
+    @overload
+    async def execute_command(self, command: Command[R], noreply: bool = ...) -> R | None: ...
+    async def execute_command(self, command: Command[R], noreply: bool = False) -> R | None:
         connection, release = None, None
         try:
             connection, release = await self.acquire(command)
-            request = await connection.create_request(command)
-            response = await request
+            response = None
+            if noreply:
+                await (await connection.create_request(command, noreply=True))
+            else:
+                request: Future[R] = await connection.create_request(command)
+                response = await request
         except (ConnectionError, OSError):
             self._connect_failed += 1
             raise
@@ -207,7 +191,7 @@ class SingleServerPool(Pool):
                         self._connections.put_nowait(connection)
                         released = True
             return connection, not released
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
 
     def close(self) -> None:
@@ -233,7 +217,6 @@ class SingleServerPool(Pool):
                             and time.time() - connection.metrics.last_read
                             > self._idle_connection_timeout
                         ):
-                            print("disconnecting idle")
                             connection.disconnect()
                 await asyncio.sleep(self._idle_connection_timeout)
             except asyncio.CancelledError:
@@ -247,42 +230,30 @@ class SingleServerPool(Pool):
 class ClusterPool(Pool):
     def __init__(
         self,
-        locator: list[SingleServerLocator],
-        max_connections: int = 2,
-        blocking_timeout: float = 30.0,
-        purge_unhealthy_nodes: bool = False,
-        idle_connection_timeout: float = 5.0,
-        # connection parameters
-        connect_timeout: float | None = None,
-        read_timeout: float | None = None,
-        socket_keepalive: bool | None = True,
-        socket_keepalive_options: dict[int, int | bytes] | None = None,
-        max_inflight_requests_per_connection: int | None = None,
-        ssl_context: SSLContext | None = None,
+        locator: Sequence[SingleMemcachedInstanceLocator],
+        max_connections: int = MAX_CONNECTIONS,
+        blocking_timeout: float = BLOCKING_TIMEOUT,
+        purge_unhealthy_nodes: bool = PURGE_UNHEALTHY_NODES,
+        idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
+        **connection_args: Unpack[ConnectionParams],
     ) -> None:
-        self._cluster_pools: dict[SingleServerLocator, SingleServerPool] = {}
+        self._cluster_pools: dict[SingleMemcachedInstanceLocator, SingleServerPool] = {}
         self._pool_lock = asyncio.Lock()
         self._initialized = False
         self._purge_unhealthy_nodes = purge_unhealthy_nodes
         super().__init__(
-            locator,
-            max_connections,
-            blocking_timeout,
-            idle_connection_timeout,
-            connect_timeout=connect_timeout,
-            read_timeout=read_timeout,
-            socket_keepalive=socket_keepalive,
-            socket_keepalive_options=socket_keepalive_options,
-            max_inflight_requests_per_connection=max_inflight_requests_per_connection,
-            ssl_context=ssl_context,
+            locator, max_connections, blocking_timeout, idle_connection_timeout, **connection_args
         )
-        self._unhealthy_nodes: set[SingleServerLocator] = set()
+        self._unhealthy_nodes: set[SingleMemcachedInstanceLocator] = set()
         self._router = KeyRouter(self.nodes)
         self._cluster_monitor_task: asyncio.Task[None] | None = None
 
     @property
-    def nodes(self) -> set[SingleServerLocator]:
-        return set(cast(Iterable[SingleServerLocator], self._locator)) - self._unhealthy_nodes
+    def nodes(self) -> set[SingleMemcachedInstanceLocator]:
+        return (
+            set(cast(Iterable[SingleMemcachedInstanceLocator], self._locator))
+            - self._unhealthy_nodes
+        )
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -301,26 +272,33 @@ class ClusterPool(Pool):
                 self._cluster_monitor_task = asyncio.create_task(self.__cluster_monitor())
             self._initialized = True
 
-    async def execute_command(self, command: Command[R]) -> R:
-        mapping = defaultdict(lambda: [])
+    @overload
+    async def execute_command(self, command: Command[R]) -> R: ...
+    @overload
+    async def execute_command(self, command: Command[R], noreply: bool = ...) -> R | None: ...
+    async def execute_command(self, command: Command[R], noreply: bool = False) -> R | None:
+        mapping = defaultdict(list)
         await self.initialize()
         if command.keys:
             for key in command.keys:
                 mapping[self._router.get_node(key)].append(key)
             results = await asyncio.gather(
                 *[
-                    self._cluster_pools[node].execute_command(command.subset(keys))
+                    self._cluster_pools[node].execute_command(command.subset(keys), noreply=noreply)  # type: ignore[arg-type]
                     for node, keys in mapping.items()
                 ]
             )
 
         else:
             results = await asyncio.gather(
-                *[pool.execute_command(command) for pool in self._cluster_pools.values()]
+                *[
+                    pool.execute_command(command, noreply=noreply)  # type: ignore[arg-type]
+                    for pool in self._cluster_pools.values()
+                ]
             )
-        if command.noreply:
-            return None  # type: ignore[return-value]
-        return command.merge(results)
+        if noreply:
+            return None
+        return command.merge(results)  # type: ignore[arg-type]
 
     async def __cluster_monitor(self) -> None:
         while True:

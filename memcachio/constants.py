@@ -36,6 +36,7 @@ class Responses(bytes, enum.Enum):
     NOT_STORED = b"NOT_STORED"
     VERSION = b"VERSION"
     ERROR = b"ERROR"
+    SERVER_ERROR = b"SERVER_ERROR"
     CLIENT_ERROR = b"CLIENT_ERROR"
     STAT = b"STAT"
     END = b"END"

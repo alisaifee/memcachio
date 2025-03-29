@@ -1,8 +1,27 @@
+"""memcachio
+
+async memcached client
+"""
+
 from __future__ import annotations
 
-from . import _version
+from . import _version, defaults
 from .client import Client
-from .types import ServerLocator, TCPLocator
+from .connection import BaseConnection, TCPConnection, UnixSocketConnection
+from .pool import ClusterPool, Pool, SingleServerPool
+from .types import MemcachedItem, MemcachedLocator, TCPLocator
 
-__all__ = ["Client", "TCPLocator", "ServerLocator"]
+__all__ = [
+    "BaseConnection",
+    "Client",
+    "ClusterPool",
+    "MemcachedItem",
+    "MemcachedLocator",
+    "Pool",
+    "SingleServerPool",
+    "TCPConnection",
+    "TCPLocator",
+    "UnixSocketConnection",
+    "defaults",
+]
 __version__ = _version.get_versions()["version"]

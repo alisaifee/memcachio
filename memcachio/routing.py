@@ -3,9 +3,9 @@ from __future__ import annotations
 import bisect
 import hashlib
 import importlib.util
-from typing import Callable
+from collections.abc import Callable
 
-from memcachio.types import SingleServerLocator
+from memcachio.types import SingleMemcachedInstanceLocator
 
 MMH3_AVAILABLE = importlib.util.find_spec("mmh3") is not None
 if MMH3_AVAILABLE:
@@ -19,30 +19,30 @@ def md5_hasher(key: str) -> int:
 class KeyRouter:
     def __init__(
         self,
-        nodes: set[SingleServerLocator] | None = None,
+        nodes: set[SingleMemcachedInstanceLocator] | None = None,
         hasher: Callable[[str], int] | None = None,
     ) -> None:
-        self.ring: dict[int, SingleServerLocator] = {}
+        self.ring: dict[int, SingleMemcachedInstanceLocator] = {}
         self._sorted_keys: list[int] = []
         self._hasher = hasher or md5_hasher
         self._spread = 3
         for node in nodes or set():
             self.add_node(node)
 
-    def add_node(self, node: SingleServerLocator) -> None:
+    def add_node(self, node: SingleMemcachedInstanceLocator) -> None:
         hash_variants = [self._hasher(f"{node}:{i}") for i in range(self._spread)]
         for hash_value in hash_variants:
             self.ring[hash_value] = node
             bisect.insort(self._sorted_keys, hash_value)
 
-    def remove_node(self, node: SingleServerLocator) -> None:
+    def remove_node(self, node: SingleMemcachedInstanceLocator) -> None:
         hash_variants = [self._hasher(f"{node}:{i}") for i in range(3)]
         for hash_value in hash_variants:
             if hash_value in self.ring:
                 self._sorted_keys.remove(hash_value)
                 del self.ring[hash_value]
 
-    def get_node(self, key: str) -> SingleServerLocator:
+    def get_node(self, key: str) -> SingleMemcachedInstanceLocator:
         hash_value = self._hasher(key)
         idx = bisect.bisect(self._sorted_keys, hash_value)
         if idx == len(self._sorted_keys):
