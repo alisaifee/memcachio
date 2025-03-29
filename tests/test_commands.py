@@ -179,3 +179,20 @@ class TestCommands:
     async def test_version(self, client: memcachio.Client):
         version = await client.version()
         assert re.match(r"\d+.\d+.\d+", version)
+
+    async def test_all_noreply(self, client: memcachio.Client):
+        assert None is await client.set("fubar", 1, noreply=True)
+        assert None is await client.cas("fubar", 1, 0, noreply=True)
+        assert None is await client.add("fubar", 1, noreply=True)
+        assert None is await client.incr("fubar", 1, noreply=True)
+        assert None is await client.decr("fubar", 2, noreply=True)
+        assert b"0" == (await client.get("fubar")).get(b"fubar").value
+        assert None is await client.replace("fubar", 6, noreply=True)
+        assert None is await client.append("fubar", 6, noreply=True)
+        assert None is await client.prepend("fubar", 6, noreply=True)
+        value = await client.gat("fubar", "fubar2", expiry=2)
+        assert None is await client.touch("fubar", 1, noreply=True)
+        await asyncio.sleep(1)
+        assert None is await client.delete("fubar2", noreply=True)
+        assert value.get(b"fubar").value == b"666"
+        assert {} == await client.get("fubar", "fubar2")

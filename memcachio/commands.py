@@ -68,7 +68,6 @@ class BasicResponseCommand(Command[bool]):
         response = data.readline()
         self._check_header(response)
         if not response.rstrip() == self.success.value:
-            print(response)
             return False
         return True
 
