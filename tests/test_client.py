@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import ssl
 
 import pytest
@@ -35,10 +34,8 @@ class TestClient:
             def close(self) -> None:
                 pass
 
-            async def execute_command(self, command: Command[R]) -> R:
-                future = asyncio.Future()
-                future.set_result(True)
-                return future
+            async def execute_command(self, command: Command[R], noreply: bool = False) -> R | None:
+                return True
 
         client = memcachio.Client(connection_pool=MyPool(memcached_1))
         assert await client.set("fubar", 1)

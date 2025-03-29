@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import abc
 import copy
+from collections.abc import Sequence
 from io import BytesIO
-from typing import AnyStr, ClassVar, Generic, Self, Sequence, TypeVar, cast
+from typing import AnyStr, ClassVar, Generic, Self, TypeVar, cast
 
 from memcachio.constants import LINE_END, Commands, Responses
 from memcachio.errors import ClientError, MemcachedError, NotEnoughData
@@ -14,7 +15,7 @@ R = TypeVar("R")
 
 
 class Command(abc.ABC, Generic[R]):
-    __slots__ = ("noreply", "_keys")
+    __slots__ = ("_keys", "noreply")
     name: ClassVar[Commands]
     readonly: ClassVar[bool] = False
 
@@ -38,7 +39,9 @@ class Command(abc.ABC, Generic[R]):
         response = header.rstrip()
         if response.startswith(Responses.CLIENT_ERROR):
             raise ClientError(decodedstr(response.split(Responses.CLIENT_ERROR)[1]).strip())
-        if response.startswith(Responses.ERROR):
+        elif response.startswith(Responses.SERVER_ERROR):
+            raise MemcachedError(decodedstr(response.split(Responses.SERVER_ERROR)[1]).strip())
+        elif response.startswith(Responses.ERROR):
             raise MemcachedError(decodedstr(response).strip())
         return None
 
@@ -65,12 +68,13 @@ class BasicResponseCommand(Command[bool]):
         response = data.readline()
         self._check_header(response)
         if not response.rstrip() == self.success.value:
+            print(response)
             return False
         return True
 
 
 class GetCommand(Command[dict[AnyStr, MemcachedItem[AnyStr]]]):
-    __slots__ = ("items", "decode_responses", "encoding")
+    __slots__ = ("decode_responses", "encoding", "items")
     name = Commands.GET
     readonly = True
 
@@ -150,7 +154,7 @@ class GatsCommand(GatCommand[AnyStr]):
 
 
 class GenericStoreCommand(BasicResponseCommand):
-    __slots__ = ("encoding", "flags", "expiry", "value", "cas")
+    __slots__ = ("cas", "encoding", "expiry", "flags", "value")
 
     def __init__(
         self,
@@ -264,7 +268,7 @@ class TouchCommand(BasicResponseCommand):
         super().__init__(key, noreply=noreply)
 
     def build_request_parameters(self) -> bytes:
-        request = f"{self.keys[0]} {self.expiry}".encode("utf-8")
+        request = f"{self.keys[0]} {self.expiry}".encode()
         if self.noreply:
             request += b" noreply"
         return request
