@@ -41,12 +41,21 @@ class ConnectionParams(TypedDict):
     socket_nodelay: NotRequired[bool | None]
     #: Whether to set the :data:`socket.SO_KEEPALIVE` flag on the socket
     socket_keepalive: NotRequired[bool | None]
+    #: Additional options to set if ``socket_keepalive`` is ``True``
     socket_keepalive_options: NotRequired[dict[int, int | bytes] | None]
+    #: Maximum number of concurrent requests to allow on the connection
     max_inflight_requests_per_connection: NotRequired[int]
+    #: SSL context to use if connecting to a memcached instance listening on a secure port
     ssl_context: NotRequired[SSLContext | None]
+    #: List of callables that will be called with the connection as the first argument
+    #  when the connection is successfully established.
     on_connect_callbacks: NotRequired[list[Callable[[BaseConnection], None]]]
+    #: List of callables that will be called with the connection as the first argument
+    #  when the connection is disconnected from the server
     on_disconnect_callbacks: NotRequired[list[Callable[[BaseConnection], None]]]
+    #: Username for SASL authentication
     username: NotRequired[str | None]
+    #: Password for SASL authentication
     password: NotRequired[str | None]
 
 
