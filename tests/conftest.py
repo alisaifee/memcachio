@@ -14,12 +14,6 @@ import memcachio
 from memcachio.types import TCPLocator
 
 
-async def check_test_constraints(request, client):
-    for marker in request.node.iter_markers():
-        if marker.name == "os" and not marker.args[0].lower() == platform.system().lower():
-            return pytest.skip(f"Skipped for {platform.system()}")
-
-
 def ping_socket(host, port):
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
