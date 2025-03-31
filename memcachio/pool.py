@@ -183,7 +183,7 @@ class SingleServerPool(Pool):
         try:
             async with asyncio.timeout(self._blocking_timeout):
                 connection = await self._connections.get()
-                if connection and connection.reusable():
+                if connection and connection.reusable:
                     self._connections.put_nowait(connection)
                     released = True
                 else:

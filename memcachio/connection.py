@@ -183,6 +183,7 @@ class BaseConnection(BaseProtocol, ABC):
         """
         return self._transport is not None and self._write_ready.is_set()
 
+    @property
     def reusable(self) -> bool:
         """
         Whether this connection is healthy enough to handle
