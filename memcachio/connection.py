@@ -340,6 +340,10 @@ class TCPConnection(BaseConnection):
         super().__init__(**kwargs)
 
     async def connect(self) -> None:
+        """
+        Establish a connection to the target memcached server listening on
+        a tcp port
+        """
         async with self._transport_lock:
             if self._transport:
                 return
@@ -365,6 +369,10 @@ class UnixSocketConnection(BaseConnection):
         super().__init__(**kwargs)
 
     async def connect(self) -> None:
+        """
+        Establish a connection to the target memcached server listening on
+        a unix domain socket
+        """
         async with self._transport_lock:
             if self._transport:
                 return
