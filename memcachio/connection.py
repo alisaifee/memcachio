@@ -47,16 +47,16 @@ class ConnectionParams(TypedDict):
     max_inflight_requests_per_connection: NotRequired[int]
     #: SSL context to use if connecting to a memcached instance listening on a secure port
     ssl_context: NotRequired[SSLContext | None]
+    #: Username for SASL authentication
+    username: NotRequired[str | None]
+    #: Password for SASL authentication
+    password: NotRequired[str | None]
     #: List of callables that will be called with the connection as the first argument
     #  when the connection is successfully established.
     on_connect_callbacks: NotRequired[list[Callable[[BaseConnection], None]]]
     #: List of callables that will be called with the connection as the first argument
     #  when the connection is disconnected from the server
     on_disconnect_callbacks: NotRequired[list[Callable[[BaseConnection], None]]]
-    #: Username for SASL authentication
-    username: NotRequired[str | None]
-    #: Password for SASL authentication
-    password: NotRequired[str | None]
 
 
 @dataclasses.dataclass
@@ -92,13 +92,25 @@ class Request(Generic[R]):
 
 @dataclasses.dataclass
 class ConnectionMetrics:
+    """
+    Tracks metrics for a connection.
+    """
+
+    #: Timestamp when the connection was established.
     created_at: float | None = None
+    #: Total number of successfully processed requests.
     requests_processed: int = 0
+    #: Total number of requests that failed.
     requests_failed: int = 0
+    #: Timestamp when data was last written.
     last_written: float = 0.0
+    #: Timestamp when data was last read.
     last_read: float = 0.0
+    #: Timestamp when the last request completed processing.
     last_request_processed: float = 0.0
+    #: Average time taken to process requests.
     average_response_time: float = 0.0
+    #: Number of requests currently pending.
     requests_pending: int = 0
 
 
@@ -108,22 +120,36 @@ class BaseConnection(BaseProtocol, ABC):
     """
 
     locator: SingleMemcachedInstanceLocator
+    #: Metrics related to this connection
     metrics: ConnectionMetrics
 
     def __init__(
         self,
+        connect_timeout: float | None = CONNECT_TIMEOUT,
+        read_timeout: float | None = READ_TIMEOUT,
         socket_keepalive: bool | None = True,
         socket_keepalive_options: dict[int, int | bytes] | None = None,
         socket_nodelay: bool | None = False,
-        connect_timeout: float | None = CONNECT_TIMEOUT,
-        read_timeout: float | None = READ_TIMEOUT,
         max_inflight_requests_per_connection: int = MAX_INFLIGHT_REQUESTS_PER_CONNECTION,
         ssl_context: SSLContext | None = None,
-        on_connect_callbacks: list[Callable[[BaseConnection], None]] | None = None,
-        on_disconnect_callbacks: list[Callable[[BaseConnection], None]] | None = None,
         username: str | None = None,
         password: str | None = None,
+        on_connect_callbacks: list[Callable[[BaseConnection], None]] | None = None,
+        on_disconnect_callbacks: list[Callable[[BaseConnection], None]] | None = None,
     ) -> None:
+        """
+        :param connect_timeout: Timeout for establishing a connection.
+        :param read_timeout: Timeout for reading data from the connection.
+        :param socket_keepalive: Whether to enable SO_KEEPALIVE on the socket.
+        :param socket_keepalive_options: Additional keepalive options.
+        :param socket_nodelay: Whether to enable TCP_NODELAY on the socket.
+        :param max_inflight_requests_per_connection: Maximum concurrent requests allowed.
+        :param ssl_context: SSL context for secure connections.
+        :param username: Username for SASL authentication.
+        :param password: Password for SASL authentication.
+        :param on_connect_callbacks: Callbacks to invoke upon successful connection.
+        :param on_disconnect_callbacks: Callbacks to invoke upon disconnection.
+        """
         self._connect_timeout: float | None = connect_timeout
         self._read_timeout: float | None = read_timeout
         self._socket_nodelay: bool | None = socket_nodelay
@@ -144,13 +170,24 @@ class BaseConnection(BaseProtocol, ABC):
         self.metrics: ConnectionMetrics = ConnectionMetrics()
 
     @abstractmethod
-    async def connect(self) -> None: ...
+    async def connect(self) -> None:
+        """
+        Establish a connection to the target memcached server
+        """
+        ...
 
     @property
     def connected(self) -> bool:
+        """
+        Whether the connection is currently connected
+        """
         return self._transport is not None and self._write_ready.is_set()
 
     def reusable(self) -> bool:
+        """
+        Whether this connection is healthy enough to handle
+        any more concurrent requests
+        """
         return (
             self.connected
             and len(self._request_queue) < self._max_inflight_requests_per_connection
@@ -163,9 +200,17 @@ class BaseConnection(BaseProtocol, ABC):
         self.metrics.last_written = time.time()
 
     def disconnect(self) -> None:
+        """
+        Disconnect from the memcached server and clear internal
+        state.
+        """
         self.__on_disconnect()
 
     def create_request(self, command: Command[R]) -> None:
+        """
+        Send a request to the memcached server and queue the response
+        handling if this is not a ``noreply`` request.
+        """
         self.send(bytes(command.build_request()))
         command.request_sent.set_result(True)
         if not command.noreply:

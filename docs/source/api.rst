@@ -37,6 +37,8 @@ Connections
 .. autoclass:: memcachio.UnixSocketConnection
    :class-doc-from: both
    :no-inherited-members:
+.. autoclass:: memcachio.connection.ConnectionMetrics
+   :no-inherited-members:
 
 Exception types
 ---------------
