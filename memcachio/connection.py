@@ -345,8 +345,6 @@ class TCPConnection(BaseConnection):
         a tcp port
         """
         async with self._transport_lock:
-            if self._transport:
-                return
             try:
                 async with asyncio.timeout(self._connect_timeout):
                     transport, _ = await get_running_loop().create_connection(
@@ -374,8 +372,6 @@ class UnixSocketConnection(BaseConnection):
         a unix domain socket
         """
         async with self._transport_lock:
-            if self._transport:
-                return
             try:
                 async with asyncio.timeout(self._connect_timeout):
                     transport, _ = await get_running_loop().create_unix_connection(
