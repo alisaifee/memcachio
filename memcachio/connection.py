@@ -24,7 +24,12 @@ from ssl import SSLContext
 from typing import Any, Generic, NotRequired, TypedDict, TypeVar, Unpack, cast
 
 from .commands import Command, SetCommand
-from .defaults import CONNECT_TIMEOUT, MAX_INFLIGHT_REQUESTS_PER_CONNECTION, READ_TIMEOUT
+from .defaults import (
+    CONNECT_TIMEOUT,
+    MAX_AVERAGE_RESPONSE_TIME_FOR_CONNECTION_REUSE,
+    MAX_INFLIGHT_REQUESTS_PER_CONNECTION,
+    READ_TIMEOUT,
+)
 from .errors import MemcachedError, MemcachioConnectionError, NotEnoughData
 from .types import SingleMemcachedInstanceLocator, TCPLocator, UnixSocketLocator
 from .utils import bytestr, decodedstr
@@ -45,6 +50,8 @@ class ConnectionParams(TypedDict):
     socket_keepalive_options: NotRequired[dict[int, int | bytes] | None]
     #: Maximum number of concurrent requests to allow on the connection
     max_inflight_requests_per_connection: NotRequired[int]
+    #:  Threshold for allowing the connection to be reused when there are requests pending.
+    max_average_response_time_for_connection_reuse: NotRequired[float]
     #: SSL context to use if connecting to a memcached instance listening on a secure port
     ssl_context: NotRequired[SSLContext | None]
     #: Username for SASL authentication
@@ -131,6 +138,7 @@ class BaseConnection(BaseProtocol, ABC):
         socket_keepalive_options: dict[int, int | bytes] | None = None,
         socket_nodelay: bool | None = False,
         max_inflight_requests_per_connection: int = MAX_INFLIGHT_REQUESTS_PER_CONNECTION,
+        max_average_response_time_for_connection_reuse: float = MAX_AVERAGE_RESPONSE_TIME_FOR_CONNECTION_REUSE,
         ssl_context: SSLContext | None = None,
         username: str | None = None,
         password: str | None = None,
@@ -144,6 +152,8 @@ class BaseConnection(BaseProtocol, ABC):
         :param socket_keepalive_options: Additional keepalive options.
         :param socket_nodelay: Whether to enable TCP_NODELAY on the socket.
         :param max_inflight_requests_per_connection: Maximum concurrent requests allowed.
+        :param max_average_response_time_for_connection_reuse: Threshold for allowing the connection to be
+         reused when there are requests pending.
         :param ssl_context: SSL context for secure connections.
         :param username: Username for SASL authentication.
         :param password: Password for SASL authentication.
@@ -156,6 +166,9 @@ class BaseConnection(BaseProtocol, ABC):
         self._socket_keepalive: bool | None = socket_keepalive
         self._socket_keepalive_options: dict[int, int | bytes] = socket_keepalive_options or {}
         self._max_inflight_requests_per_connection = max_inflight_requests_per_connection
+        self._max_average_response_time_for_connection_reuse = (
+            max_average_response_time_for_connection_reuse
+        )
         self._ssl_context: SSLContext | None = ssl_context
         self._last_error: Exception | None = None
         self._transport: Transport | None = None
@@ -190,9 +203,9 @@ class BaseConnection(BaseProtocol, ABC):
         any more concurrent requests
         """
         return (
-            self.connected
-            and len(self._request_queue) < self._max_inflight_requests_per_connection
-            and self.metrics.average_response_time < 0.01
+            len(self._request_queue) < self._max_inflight_requests_per_connection
+            and self.metrics.average_response_time
+            < self._max_average_response_time_for_connection_reuse
         )
 
     def send(self, data: bytes) -> None:
@@ -344,19 +357,23 @@ class TCPConnection(BaseConnection):
         Establish a connection to the target memcached server listening on
         a tcp port
         """
-        if self._transport:
-            return
-        async with self._transport_lock:
-            try:
-                async with asyncio.timeout(self._connect_timeout):
-                    transport, _ = await get_running_loop().create_connection(
-                        lambda: self, host=self._host, port=self._port, ssl=self._ssl_context
-                    )
-            except (OSError, TimeoutError) as e:
-                msg = f"Unable to establish a connection within {self._connect_timeout} seconds"
-                raise MemcachioConnectionError(msg, self.locator) from e
-        await self._write_ready.wait()
-        await self._authenticate()
+        if not self._transport:
+            async with self._transport_lock:
+                if not self._transport:
+                    try:
+                        async with asyncio.timeout(self._connect_timeout):
+                            transport, _ = await get_running_loop().create_connection(
+                                lambda: self,
+                                host=self._host,
+                                port=self._port,
+                                ssl=self._ssl_context,
+                            )
+                    except (OSError, TimeoutError) as e:
+                        msg = f"Unable to establish a connection within {self._connect_timeout} seconds"
+                        raise MemcachioConnectionError(msg, self.locator) from e
+                    await self._write_ready.wait()
+                    if self._auth:
+                        await self._authenticate()
 
 
 class UnixSocketConnection(BaseConnection):
@@ -373,16 +390,16 @@ class UnixSocketConnection(BaseConnection):
         Establish a connection to the target memcached server listening on
         a unix domain socket
         """
-        if self._transport:
-            return
-        async with self._transport_lock:
-            try:
-                async with asyncio.timeout(self._connect_timeout):
-                    transport, _ = await get_running_loop().create_unix_connection(
-                        lambda: self, path=self._path
-                    )
-            except (OSError, TimeoutError) as e:
-                msg = f"Unable to establish a connection within {self._connect_timeout} seconds"
-                raise MemcachioConnectionError(msg, self.locator) from e
-        await self._write_ready.wait()
-        await self._authenticate()
+        if not self._transport:
+            async with self._transport_lock:
+                if not self._transport:
+                    try:
+                        async with asyncio.timeout(self._connect_timeout):
+                            transport, _ = await get_running_loop().create_unix_connection(
+                                lambda: self, path=self._path
+                            )
+                    except (OSError, TimeoutError) as e:
+                        msg = f"Unable to establish a connection within {self._connect_timeout} seconds"
+                        raise MemcachioConnectionError(msg, self.locator) from e
+                    await self._write_ready.wait()
+                    await self._authenticate()

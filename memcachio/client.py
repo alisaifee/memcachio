@@ -36,6 +36,7 @@ from memcachio.defaults import (
     CONNECT_TIMEOUT,
     ENCODING,
     IDLE_CONNECTION_TIMEOUT,
+    MAX_AVERAGE_RESPONSE_TIME_FOR_CONNECTION_REUSE,
     MAX_CONNECTIONS,
     MAX_INFLIGHT_REQUESTS_PER_CONNECTION,
     MIN_CONNECTIONS,
@@ -69,6 +70,7 @@ class Client(Generic[AnyStr]):
         socket_keepalive: bool | None = ...,
         socket_keepalive_options: dict[int, int | bytes] | None = ...,
         max_inflight_requests_per_connection: int = ...,
+        max_average_response_time_for_connection_reuse: float = ...,
         ssl_context: SSLContext | None = ...,
         username: str | None = ...,
         password: str | None = ...,
@@ -92,6 +94,7 @@ class Client(Generic[AnyStr]):
         socket_keepalive: bool | None = ...,
         socket_keepalive_options: dict[int, int | bytes] | None = ...,
         max_inflight_requests_per_connection: int = ...,
+        max_average_response_time_for_connection_reuse: float = ...,
         ssl_context: SSLContext | None = ...,
         username: str | None = ...,
         password: str | None = ...,
@@ -114,6 +117,7 @@ class Client(Generic[AnyStr]):
         socket_keepalive: bool | None = None,
         socket_keepalive_options: dict[int, int | bytes] | None = None,
         max_inflight_requests_per_connection: int = MAX_INFLIGHT_REQUESTS_PER_CONNECTION,
+        max_average_response_time_for_connection_reuse: float = MAX_AVERAGE_RESPONSE_TIME_FOR_CONNECTION_REUSE,
         ssl_context: SSLContext | None = None,
         username: str | None = None,
         password: str | None = None,
@@ -143,6 +147,8 @@ class Client(Generic[AnyStr]):
         :param socket_keepalive: If True, enable TCP keepalive on the socket.
         :param socket_keepalive_options: Additional options for configuring socket keepalive.
         :param max_inflight_requests_per_connection: Maximum number of requests allowed to be in-flight per connection.
+        :param max_average_response_time_for_connection_reuse: Threshold for allowing the connection to be
+         reused when there are requests pending.
         :param ssl_context: An SSL context to use for encrypted connections.
         :param username: Username for SASL authentication (if required).
         :param password: Password for SASL authentication (if required).
@@ -162,6 +168,7 @@ class Client(Generic[AnyStr]):
                 socket_keepalive=socket_keepalive,
                 socket_keepalive_options=socket_keepalive_options,
                 max_inflight_requests_per_connection=max_inflight_requests_per_connection,
+                max_average_response_time_for_connection_reuse=max_average_response_time_for_connection_reuse,
                 ssl_context=ssl_context,
                 username=username,
                 password=password,

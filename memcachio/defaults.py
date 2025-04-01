@@ -11,9 +11,11 @@ IDLE_CONNECTION_TIMEOUT = 10.0
 #: Maximum time to wait to retrieve a connection from the pool
 BLOCKING_TIMEOUT = 5.0
 
-# Maxiumum time to wait to establish a connection
+#: Maxiumum time to wait to establish a connection
 CONNECT_TIMEOUT = 1.0
-# Maxiumum time to wait to read a response for a request
+#: Maxiumum time to wait to read a response for a request
 READ_TIMEOUT = None
-# Maxiumum number of concurrent requests to pipeline on each connection
+#: Maxiumum number of concurrent requests to pipeline on each connection
 MAX_INFLIGHT_REQUESTS_PER_CONNECTION = 100
+#:  Threshold for allowing the connection to be reused when there are requests pending.
+MAX_AVERAGE_RESPONSE_TIME_FOR_CONNECTION_REUSE = 0.05
