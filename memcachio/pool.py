@@ -204,10 +204,7 @@ class SingleServerPool(Pool):
         async with self._pool_lock:
             if self._initialized:
                 return
-            try:
-                connection = self._connections.get_nowait()
-            except asyncio.QueueEmpty:
-                connection = None
+            connection = self._connections.get_nowait()
             if not connection:
                 self._connections.put_nowait(await self._create_connection())
 
