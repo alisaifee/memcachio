@@ -25,14 +25,11 @@ class TestSingleInstancePool:
         pool = Pool.from_locator(
             locator,
             max_connections=4,
-            blocking_timeout=0.01,
             max_inflight_requests_per_connection=0,
         )
-        await pool.initialize()
-        assert not all(pool._connections._queue)
-        commands = [VersionCommand() for _ in range(4)]
+        commands = [VersionCommand() for _ in range(16)]
         await asyncio.gather(*[pool.execute_command(command) for command in commands])
-        assert all(pool._connections._queue)
+        assert len(pool._active_connections) == 4
 
     async def test_blocking_timeout(self, locator, mocker):
         pool = Pool.from_locator(
