@@ -9,6 +9,9 @@ from pytest_lazy_fixtures import lf
 from memcachio import BaseConnection, ClusterPool, Pool, SingleServerPool
 from memcachio.commands import FlushAllCommand, GetCommand, SetCommand, TouchCommand, VersionCommand
 from memcachio.errors import ConnectionNotAvailable
+from tests.conftest import pypy_flaky_marker
+
+pytestmark = pypy_flaky_marker()
 
 
 @pytest.mark.parametrize(

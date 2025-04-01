@@ -5,6 +5,7 @@ import os
 import platform
 import socket
 import ssl
+import sys
 import time
 
 import pytest
@@ -12,6 +13,10 @@ from pytest_lazy_fixtures import lf
 
 import memcachio
 from memcachio.types import TCPLocator
+
+
+def pypy_flaky_marker():
+    return pytest.mark.xfail(sys.implementation.name == "pypy", reason="Flaky on pypy")
 
 
 def ping_socket(host, port):

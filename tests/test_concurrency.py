@@ -8,6 +8,9 @@ from pytest_lazy_fixtures import lf
 
 import memcachio
 from memcachio.pool import SingleServerPool
+from tests.conftest import pypy_flaky_marker
+
+pytestmark = pypy_flaky_marker()
 
 
 @pytest.mark.parametrize(
