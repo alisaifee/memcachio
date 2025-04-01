@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from ssl import SSLContext
 from typing import (
     AnyStr,
@@ -60,6 +61,7 @@ class Client(Generic[AnyStr]):
         max_connections: int = ...,
         blocking_timeout: float = ...,
         idle_connection_timeout: float = ...,
+        hashing_function: Callable[[str], int] | None = ...,
         connection_pool: Pool | None = ...,
         connect_timeout: float | None = ...,
         read_timeout: float | None = ...,
@@ -82,6 +84,7 @@ class Client(Generic[AnyStr]):
         max_connections: int = ...,
         blocking_timeout: float = ...,
         idle_connection_timeout: float = ...,
+        hashing_function: Callable[[str], int] | None = ...,
         connection_pool: Pool | None = ...,
         connect_timeout: float | None = ...,
         read_timeout: float | None = ...,
@@ -103,6 +106,7 @@ class Client(Generic[AnyStr]):
         max_connections: int = MAX_CONNECTIONS,
         blocking_timeout: float = BLOCKING_TIMEOUT,
         idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
+        hashing_function: Callable[[str], int] | None = None,
         connection_pool: Pool | None = None,
         connect_timeout: float | None = CONNECT_TIMEOUT,
         read_timeout: float | None = READ_TIMEOUT,
@@ -127,6 +131,11 @@ class Client(Generic[AnyStr]):
         :param blocking_timeout: The timeout (in seconds) to wait for a connection to become available.
         :param idle_connection_timeout: The maximum time to allow a connection to remain idle in the pool
          before being disconnected
+        :param hashing_function: A function to use for routing keys to nodes for multi-key
+         commands. If none is provided the default :func:`hashlib.md5` implementation from the
+         standard library is used.
+
+         .. note:: This parameter is only relevant when using a cluster
         :param connection_pool: An optional pre-initialized connection pool. If provided, memcached_location must be None.
         :param connect_timeout: Timeout (in seconds) for establishing a connection.
         :param read_timeout: Timeout (in seconds) for reading from a connection.
@@ -146,6 +155,7 @@ class Client(Generic[AnyStr]):
                 max_connections=max_connections,
                 blocking_timeout=blocking_timeout,
                 idle_connection_timeout=idle_connection_timeout,
+                hashing_function=hashing_function,
                 connect_timeout=connect_timeout,
                 read_timeout=read_timeout,
                 socket_nodelay=socket_nodelay,

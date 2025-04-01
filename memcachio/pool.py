@@ -90,6 +90,7 @@ class Pool(ABC):
         max_connections: int = MAX_CONNECTIONS,
         blocking_timeout: float = BLOCKING_TIMEOUT,
         idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
+        hashing_function: Callable[[str], int] | None = None,
         **connection_args: Unpack[ConnectionParams],
     ) -> Pool:
         """
@@ -99,16 +100,19 @@ class Pool(ABC):
         :meta private:
         """
         kls: type[Pool]
+        extra_args = {}
         if is_single_server(locator):
             kls = SingleServerPool
         else:
             kls = ClusterPool
+            extra_args["hashing_function"] = hashing_function
         return kls(
             locator,
             min_connections=min_connections,
             max_connections=max_connections,
             blocking_timeout=blocking_timeout,
             idle_connection_timeout=idle_connection_timeout,
+            **extra_args,
             **connection_args,
         )
 
