@@ -152,8 +152,7 @@ class SingleServerPool(Pool):
         self._connection_parameters.setdefault("on_disconnect_callbacks", []).append(
             self.__on_connection_disconnected
         )
-        self._active_connections: list[weakref.ProxyType[BaseConnection]] = []
-
+        self._active_connections: weakref.WeakSet[BaseConnection] = weakref.WeakSet()
         while True:
             try:
                 self._connections.put_nowait(None)
@@ -163,10 +162,16 @@ class SingleServerPool(Pool):
     async def execute_command(self, command: Command[R]) -> None:
         connection, release = None, None
         connection, release = await self.acquire(command)
+        await connection.connect()
         connection.create_request(command)
         await command.request_sent
-        if not command.noreply and release:
-            command.response.add_done_callback(lambda _: self._connections.put_nowait(connection))
+        if release:
+            if command.noreply:
+                self._connections.put_nowait(connection)
+            else:
+                command.response.add_done_callback(
+                    lambda _: self._connections.put_nowait(connection)
+                )
 
     async def _create_connection(self) -> BaseConnection:
         connection: BaseConnection | None = None
@@ -178,22 +183,17 @@ class SingleServerPool(Pool):
         assert connection
         if not connection.connected:
             await connection.connect()
-            if self._idle_connection_timeout:
-                asyncio.get_running_loop().call_later(
-                    self._idle_connection_timeout, self.__check_connection_idle, connection
-                )
         return connection
 
     def __check_connection_idle(self, connection: BaseConnection) -> None:
         if (
-            connection.connected
-            and time.time() - connection.metrics.last_read > self._idle_connection_timeout
+            time.time() - connection.metrics.last_read > self._idle_connection_timeout
             and connection.metrics.requests_pending == 0
             and len(self._active_connections) > self._min_connections
         ):
             connection.disconnect()
-            self._active_connections.remove(weakref.proxy(connection))
-        else:
+            self._active_connections.remove(connection)
+        elif connection.connected:
             asyncio.get_running_loop().call_later(
                 self._idle_connection_timeout, self.__check_connection_idle, connection
             )
@@ -204,9 +204,10 @@ class SingleServerPool(Pool):
         async with self._pool_lock:
             if self._initialized:
                 return
-            connection = self._connections.get_nowait()
-            if not connection:
-                self._connections.put_nowait(await self._create_connection())
+            for _ in range(self._min_connections):
+                connection = self._connections.get_nowait()
+                if not connection:
+                    self._connections.put_nowait(await self._create_connection())
 
             self._initialized = True
 
@@ -235,13 +236,16 @@ class SingleServerPool(Pool):
                     connection.disconnect()
             except asyncio.QueueEmpty:
                 break
-            self._active_connections.clear()
 
     def __on_connection_disconnected(self, connection: BaseConnection) -> None:
-        self._active_connections.remove(weakref.proxy(connection))
+        self._active_connections.remove(connection)
 
     def __on_connection_created(self, connection: BaseConnection) -> None:
-        self._active_connections.append(weakref.proxy(connection))
+        self._active_connections.add(connection)
+        if self._idle_connection_timeout:
+            asyncio.get_running_loop().call_later(
+                1 + self._idle_connection_timeout, self.__check_connection_idle, connection
+            )
 
 
 class ClusterPool(Pool):

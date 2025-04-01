@@ -46,7 +46,7 @@ class TestSingleInstancePool:
         with pytest.raises(
             ConnectionNotAvailable, match="Unable to get a connection.*in 0.01 seconds"
         ):
-            await asyncio.gather(*[pool.execute_command(GetCommand("key")) for i in range(4)])
+            await asyncio.gather(*[pool.execute_command(GetCommand("key")) for i in range(16)])
 
     async def test_idle_connection_timeout(self, locator):
         pool = Pool.from_locator(
@@ -54,7 +54,7 @@ class TestSingleInstancePool:
             max_connections=10,
             min_connections=4,
             max_inflight_requests_per_connection=0,
-            idle_connection_timeout=0.1,
+            idle_connection_timeout=0.5,
         )
         set_command = SetCommand("key", bytes(1024))
         await pool.execute_command(set_command)
@@ -63,8 +63,9 @@ class TestSingleInstancePool:
         gets = [GetCommand("key") for _ in range(1024)]
         await asyncio.gather(*[pool.execute_command(get_command) for get_command in gets])
         await asyncio.gather(*[get_command.response for get_command in gets])
+
         assert len(pool._active_connections) == 10
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.5)
         assert len(pool._active_connections) == 4
 
 
