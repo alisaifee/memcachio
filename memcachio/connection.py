@@ -68,7 +68,7 @@ class ConnectionParams(TypedDict):
 
 @dataclasses.dataclass
 class Request(Generic[R]):
-    connection: weakref.ProxyType[BaseConnection]
+    connection: weakref.ReferenceType[BaseConnection]
     command: Command[R]
     decode: bool = False
     encoding: str | None = None
@@ -77,24 +77,26 @@ class Request(Generic[R]):
     timeout_handler: asyncio.Handle | None = None
 
     def __post_init__(self) -> None:
-        self.connection.metrics.requests_pending += 1
-        self.command.response.add_done_callback(self.cleanup)
+        if connection := self.connection():
+            connection.metrics.requests_pending += 1
+        self.command.response.add_done_callback(self.update_metrics)
 
-    def cleanup(self, future: Future) -> None:  # type: ignore[type-arg]
-        metrics = self.connection.metrics
-        metrics.last_request_processed = time.time()
-        metrics.requests_pending -= 1
-        if future.done() and not future.cancelled():
-            if not self.command.response.exception():
-                metrics.requests_processed += 1
-                metrics.average_response_time = (
-                    (time.time() - self.created_at)
-                    + metrics.average_response_time * (metrics.requests_processed - 1)
-                ) / metrics.requests_processed
-                if self.timeout_handler:
-                    self.timeout_handler.cancel()
-            else:
-                metrics.requests_failed += 1
+    def update_metrics(self, future: Future[R]) -> None:
+        if connection := self.connection():
+            metrics = connection.metrics
+            metrics.last_request_processed = time.time()
+            metrics.requests_pending -= 1
+            if future.done() and not future.cancelled():
+                if not self.command.response.exception():
+                    metrics.requests_processed += 1
+                    metrics.average_response_time = (
+                        (time.time() - self.created_at)
+                        + metrics.average_response_time * (metrics.requests_processed - 1)
+                    ) / metrics.requests_processed
+                    if self.timeout_handler:
+                        self.timeout_handler.cancel()
+                else:
+                    metrics.requests_failed += 1
 
 
 @dataclasses.dataclass
@@ -229,7 +231,7 @@ class BaseConnection(BaseProtocol, ABC):
         command.request_sent.set_result(True)
         if not command.noreply:
             request = Request(
-                weakref.proxy(self),
+                weakref.ref(self),
                 command,
             )
             self._request_queue.append(request)

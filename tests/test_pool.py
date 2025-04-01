@@ -20,6 +20,7 @@ class TestSingleInstancePool:
         pool = Pool.from_locator(locator)
         assert isinstance(pool, SingleServerPool)
         assert locator == pool.locator
+        pool.close()
 
     async def test_pool_expansion(self, locator, mocker):
         pool = Pool.from_locator(
@@ -30,6 +31,7 @@ class TestSingleInstancePool:
         commands = [VersionCommand() for _ in range(16)]
         await asyncio.gather(*[pool.execute_command(command) for command in commands])
         assert len(pool._active_connections) == 4
+        pool.close()
 
     async def test_blocking_timeout(self, locator, mocker):
         pool = Pool.from_locator(
@@ -44,6 +46,7 @@ class TestSingleInstancePool:
             ConnectionNotAvailable, match="Unable to get a connection.*in 0.001 seconds"
         ):
             await asyncio.gather(*[pool.execute_command(GetCommand("key")) for i in range(16)])
+        pool.close()
 
     async def test_idle_connection_timeout(self, locator):
         pool = Pool.from_locator(
@@ -64,6 +67,7 @@ class TestSingleInstancePool:
         assert len(pool._active_connections) == 10
         await asyncio.sleep(1.5)
         assert len(pool._active_connections) == 4
+        pool.close()
 
 
 @pytest.mark.parametrize(
@@ -82,6 +86,7 @@ class TestClusterPool:
         pool = Pool.from_locator(cluster_locator)
         assert isinstance(pool, ClusterPool)
         assert cluster_locator == pool.locator
+        pool.close()
 
     async def test_cluster_pool_single_key_command(self, cluster_locator, mocker):
         pool = Pool.from_locator(cluster_locator)
@@ -90,12 +95,14 @@ class TestClusterPool:
         await pool.execute_command(command)
 
         send.assert_called_once_with(ANY, b"touch key 1\r\n")
+        pool.close()
 
     async def test_cluster_pool_multi_key_command(self, cluster_locator):
         pool = Pool.from_locator(cluster_locator)
         await asyncio.gather(
             *[pool.execute_command(SetCommand(f"key{i}", i, noreply=True)) for i in range(1024)]
         )
+        pool.close()
 
     async def test_cluster_pool_keyless_command(self, cluster_locator, mocker):
         pool = Pool.from_locator(cluster_locator)
@@ -109,3 +116,4 @@ class TestClusterPool:
             * len(cluster_locator)
         )
         assert await command.response
+        pool.close()

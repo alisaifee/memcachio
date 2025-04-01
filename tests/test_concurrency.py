@@ -21,6 +21,7 @@ class TestConcurrency:
         assert list(range(1, 1025)) == (
             sorted(await asyncio.gather(*[client.incr("key", 1) for _ in range(1024)]))
         )
+        client.connection_pool.close()
 
     @pytest.mark.parametrize("max_connections", (1, 2, 4, 32))
     async def test_max_connection(self, locator, max_connections, mocker):
@@ -41,6 +42,7 @@ class TestConcurrency:
                 )
                 <= total_max_connections
             )
+        client.connection_pool.close()
 
     @pytest.mark.parametrize("concurrent_requests", (pow(2, 10), pow(2, 11), pow(2, 12)))
     @pytest.mark.parametrize(
@@ -59,3 +61,4 @@ class TestConcurrency:
         assert {True} == set(
             await asyncio.gather(*[tester(client, i) for i in range(concurrent_requests)])
         )
+        client.connection_pool.close()
