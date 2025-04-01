@@ -1,3 +1,3 @@
-memcached_11211: memcached -p 11211 -vvv
-memcached_11212: memcached -p 11212 -vvv
-memcached_socket: memcached -s /var/tmp/memcachio.sock -vvv
+memcached_11211: memcached -p 11211 -vvv -m 1024
+memcached_11212: memcached -p 11212 -vvv -m 1024
+memcached_socket: memcached -s /var/tmp/memcachio.sock -vvv -m 1024
