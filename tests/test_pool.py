@@ -38,13 +38,13 @@ class TestSingleInstancePool:
         pool = Pool.from_locator(
             locator,
             max_connections=1,
-            blocking_timeout=0.01,
+            blocking_timeout=0.001,
             max_inflight_requests_per_connection=0,
         )
         await pool.execute_command(SetCommand("key", bytes(4096), noreply=True))
 
         with pytest.raises(
-            ConnectionNotAvailable, match="Unable to get a connection.*in 0.01 seconds"
+            ConnectionNotAvailable, match="Unable to get a connection.*in 0.001 seconds"
         ):
             await asyncio.gather(*[pool.execute_command(GetCommand("key")) for i in range(16)])
 
