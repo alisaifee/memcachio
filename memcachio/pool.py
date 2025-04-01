@@ -327,28 +327,35 @@ class ClusterPool(Pool):
         as it will be updated when the response(s) (or exception) are available on the transport
         and merged (if it is a command that spans multiple nodes).
         """
-        mapping = defaultdict(list)
         await self.initialize()
-        if command.keys:
-            for key in command.keys:
-                mapping[self._router.get_node(key)].append(key)
-            node_commands = {node: command.clone(keys) for node, keys in mapping.items()}
-        else:
-            node_commands = {
-                node: command.clone(command.keys) for node in self._cluster_pools.keys()
-            }
-        await asyncio.gather(
-            *[
-                self._cluster_pools[node].execute_command(node_command)
-                for node, node_command in node_commands.items()
-            ]
-        )
-        if not command.noreply:
-            command.response.set_result(
-                command.merge(
-                    await asyncio.gather(*[command.response for command in node_commands.values()])
-                )
+        if command.keys and len(command.keys) == 1:
+            await self._cluster_pools[self._router.get_node(command.keys[0])].execute_command(
+                command
             )
+        else:
+            mapping = defaultdict(list)
+            if command.keys:
+                for key in command.keys:
+                    mapping[self._router.get_node(key)].append(key)
+                node_commands = {node: command.clone(keys) for node, keys in mapping.items()}
+            else:
+                node_commands = {
+                    node: command.clone(command.keys) for node in self._cluster_pools.keys()
+                }
+            await asyncio.gather(
+                *[
+                    self._cluster_pools[node].execute_command(node_command)
+                    for node, node_command in node_commands.items()
+                ]
+            )
+            if not command.noreply:
+                command.response.set_result(
+                    command.merge(
+                        await asyncio.gather(
+                            *[command.response for command in node_commands.values()]
+                        )
+                    )
+                )
 
     def close(self) -> None:
         for pool in self._cluster_pools.values():
