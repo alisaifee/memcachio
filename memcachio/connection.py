@@ -250,6 +250,9 @@ class BaseConnection(BaseProtocol, ABC):
         """
         :meta private:
         """
+        if self.metrics.created_at:
+            self.metrics = ConnectionMetrics()
+
         self.metrics.created_at = time.time()
         self._transport = cast(Transport, transport)
         if (sock := self._transport.get_extra_info("socket")) is not None:
