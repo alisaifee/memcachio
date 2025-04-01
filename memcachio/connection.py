@@ -344,6 +344,8 @@ class TCPConnection(BaseConnection):
         Establish a connection to the target memcached server listening on
         a tcp port
         """
+        if self._transport:
+            return
         async with self._transport_lock:
             try:
                 async with asyncio.timeout(self._connect_timeout):
@@ -371,6 +373,8 @@ class UnixSocketConnection(BaseConnection):
         Establish a connection to the target memcached server listening on
         a unix domain socket
         """
+        if self._transport:
+            return
         async with self._transport_lock:
             try:
                 async with asyncio.timeout(self._connect_timeout):
