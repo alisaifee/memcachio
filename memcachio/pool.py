@@ -227,8 +227,6 @@ class SingleServerPool(Pool):
                 else:
                     if not connection:
                         connection = await self._create_connection()
-                        self._connections.put_nowait(connection)
-                        released = True
             return connection, not released
         except TimeoutError:
             raise ConnectionNotAvailable(self, self._blocking_timeout)
@@ -240,6 +238,7 @@ class SingleServerPool(Pool):
                     connection.disconnect()
             except asyncio.QueueEmpty:
                 break
+        self._initialized = False
 
     def __on_connection_disconnected(self, connection: BaseConnection) -> None:
         self._active_connections.remove(connection)
@@ -361,3 +360,4 @@ class ClusterPool(Pool):
         for pool in self._cluster_pools.values():
             pool.close()
         self._cluster_pools.clear()
+        self._initialized = False
