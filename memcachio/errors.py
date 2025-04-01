@@ -34,5 +34,5 @@ class MemcachioConnectionError(ConnectionError):
 
 class ConnectionNotAvailable(MemcachioConnectionError):
     def __init__(self, pool: Pool, timeout: float):
-        message = f"Unable to get a connection from the pool to {pool.locator} in {timeout} seconds"
+        message = f"Unable to get a connection from the pool in {timeout} seconds"
         super().__init__(message, instance=pool.locator)
