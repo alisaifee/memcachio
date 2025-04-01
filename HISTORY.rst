@@ -1,6 +1,14 @@
 Changelog
 ==========
 
+v0.2.0
+------
+Release Date: 2025-03-31
+
+* Documentation
+
+  * Add documentation for public APIs
+
 v0.1.2
 ------
 Release Date: 2025-03-31
@@ -29,6 +37,7 @@ Initial Release
   * Support for single or cluster hosts (TCP/UDS)
   * SASL Authentication
   * SSL connections
+
 
 
 
