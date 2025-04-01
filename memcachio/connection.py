@@ -79,22 +79,29 @@ class Request(Generic[R]):
     def __post_init__(self) -> None:
         if connection := self.connection():
             connection.metrics.requests_pending += 1
-        self.command.response.add_done_callback(self.update_metrics)
+        self.command.response.add_done_callback(self.__update_metrics)
+        self.command.response.add_done_callback(self.__cancel_timer)
 
-    def update_metrics(self, future: Future[R]) -> None:
+    def __cancel_timer(self, future: Future[R]) -> None:
+        if (
+            self.timeout_handler
+            and future.done()
+            and not (future.cancelled() or future.exception())
+        ):
+            self.timeout_handler.cancel()
+
+    def __update_metrics(self, future: Future[R]) -> None:
         if connection := self.connection():
             metrics = connection.metrics
             metrics.last_request_processed = time.time()
             metrics.requests_pending -= 1
             if future.done() and not future.cancelled():
-                if not self.command.response.exception():
+                if not future.exception():
                     metrics.requests_processed += 1
                     metrics.average_response_time = (
                         (time.time() - self.created_at)
                         + metrics.average_response_time * (metrics.requests_processed - 1)
                     ) / metrics.requests_processed
-                    if self.timeout_handler:
-                        self.timeout_handler.cancel()
                 else:
                     metrics.requests_failed += 1
 
