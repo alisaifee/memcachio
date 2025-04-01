@@ -127,10 +127,10 @@ class TestCommands:
         assert await client.set("key", 1)
         item = (await client.get("key")).get(b"key")
         assert item.value == b"1"
-        assert await client.replace("key", 2, expiry=1)
+        assert await client.replace("key", 2, expiry=2)
         item = (await client.get("key")).get(b"key")
         assert item.value == b"2"
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
         assert {} == await client.get("key")
 
     async def test_delete(self, client: memcachio.Client):
