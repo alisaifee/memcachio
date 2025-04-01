@@ -248,7 +248,7 @@ class SingleServerPool(Pool):
         self._active_connections.add(connection)
         if self._idle_connection_timeout:
             asyncio.get_running_loop().call_later(
-                1 + self._idle_connection_timeout, self.__check_connection_idle, connection
+                self._idle_connection_timeout, self.__check_connection_idle, connection
             )
 
 
