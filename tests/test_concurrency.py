@@ -7,7 +7,6 @@ import pytest
 from pytest_lazy_fixtures import lf
 
 import memcachio
-from memcachio.connection import TCPConnection
 from memcachio.pool import SingleServerPool
 
 
@@ -31,9 +30,17 @@ class TestConcurrency:
             if isinstance(client.connection_pool, SingleServerPool)
             else max_connections * len(client.connection_pool.nodes)
         )
-        connect = mocker.spy(TCPConnection, "connect")
         await asyncio.gather(*[client.set(f"key{i}", i) for i in range(4096)])
-        assert connect.call_count <= total_max_connections
+        if isinstance(client.connection_pool, SingleServerPool):
+            assert len(client.connection_pool._active_connections) <= total_max_connections
+        else:
+            assert (
+                sum(
+                    len(pool._active_connections)
+                    for pool in client.connection_pool._cluster_pools.values()
+                )
+                <= total_max_connections
+            )
 
     @pytest.mark.parametrize("concurrent_requests", (pow(2, 10), pow(2, 11), pow(2, 12)))
     @pytest.mark.parametrize(
