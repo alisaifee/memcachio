@@ -36,13 +36,79 @@ class Request(Generic[R]):
 
 
 class Command(abc.ABC, Generic[R]):
+    """
+    The abstract generic command class used throughout the
+    client -> connection pool -> connection lifecycle to
+    manage dispatching a request, parsing the response (if not
+    a ``noreply`` request) and resolving the future to receive
+    the eventual parsed response.
+
+    This class is not meant for direct use, however it's structure
+    might be interesting if implementing a custom connection pool or
+    using the connection classes directly.
+
+    As an example the following snippet demonstrates creating a
+    ``set`` command that takes no flags or expiry and is dispatched
+    directly to a connection without using :class:`~memcachio.Client`
+    or a :class:`~memcachio.pool.Pool`::
+
+        import asyncio
+        import weakref
+        from io import BytesIO
+
+        import memcachio
+        from memcachio.commands import Command, Request
+        from memcachio.constants import Commands
+
+
+        class MyCustomSetCommand(Command[bool]):
+            name = Commands.SET
+
+            def __init__(self, key: str, value: bytes, noreply: bool = False):
+                self.value = value
+                super().__init__(key, noreply=noreply)
+
+            def build_request(self) -> memcachio.commands.Request[bool]:
+                return Request(
+                    weakref.proxy(self),
+                    b"%b 0 0 %d" % (self.keys[0].encode(), len(self.value)),
+                    [self.value + b"\\r\\n"],
+                )
+
+            def parse(self, data: BytesIO) -> bool:
+                response = data.readline()
+                return response.rstrip() == b"STORED"
+
+
+        async def example():
+            command = MyCustomSetCommand("fubar", b"1234")
+            connection = memcachio.TCPConnection(("localhost", 11211))
+            await connection.connect()
+            connection.create_request(command)
+            assert await command.response
+
+
+        asyncio.run(example())
+
+    """
+
     __slots__ = ("__weakref__", "_keys", "noreply", "request_sent", "response")
+
+    #: The name of the command
     name: ClassVar[Commands]
-    readonly: ClassVar[bool] = False
+    #: A future that should be set when the request has been written
+    #:  to the socket
     request_sent: Future[bool]
+    #: A future that should be set when the request has received a response
+    #:  and parsed
     response: Future[R]
 
     def __init__(self, *keys: KeyT, noreply: bool = False):
+        """
+        :param keys:  The keys this command operates on
+        :param noreply: Whether the server should send a response
+         to the command.
+        """
         self.noreply = noreply
         self._keys: list[str] = [decodedstr(key) for key in keys or []]
         self.request_sent = asyncio.get_running_loop().create_future()
@@ -75,10 +141,21 @@ class Command(abc.ABC, Generic[R]):
         return subset
 
     @abc.abstractmethod
-    def build_request(self) -> Request[R]: ...
+    def build_request(self) -> Request[R]:
+        """
+        Build the header and (optional) payload for the request to
+        send to the memcached server
+        """
+        ...
 
     @abc.abstractmethod
-    def parse(self, data: BytesIO) -> R: ...
+    def parse(self, data: BytesIO) -> R:
+        """
+        Parse the response from the buffer assuming the
+        current position of the buffer contains the response
+        for this command.
+        """
+        ...
 
 
 class BasicResponseCommand(Command[bool]):
@@ -95,7 +172,6 @@ class BasicResponseCommand(Command[bool]):
 class GetCommand(Command[dict[AnyStr, MemcachedItem[AnyStr]]]):
     __slots__ = ("decode_responses", "encoding", "items")
     name = Commands.GET
-    readonly = True
 
     def __init__(self, *keys: KeyT, decode: bool = False, encoding: str = "utf-8") -> None:
         self.items: list[MemcachedItem[AnyStr]] = []
@@ -151,7 +227,6 @@ class GetsCommand(GetCommand[AnyStr]):
 class GatCommand(GetCommand[AnyStr]):
     __slots__ = ("expiry",)
     name = Commands.GAT
-    readonly = False
 
     def __init__(
         self,
@@ -169,7 +244,6 @@ class GatCommand(GetCommand[AnyStr]):
 
 class GatsCommand(GatCommand[AnyStr]):
     name = Commands.GATS
-    readonly = False
 
 
 class GenericStoreCommand(BasicResponseCommand):

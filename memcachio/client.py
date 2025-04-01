@@ -34,6 +34,7 @@ from memcachio.defaults import (
     BLOCKING_TIMEOUT,
     CONNECT_TIMEOUT,
     ENCODING,
+    IDLE_CONNECTION_TIMEOUT,
     MAX_CONNECTIONS,
     MAX_INFLIGHT_REQUESTS_PER_CONNECTION,
     MIN_CONNECTIONS,
@@ -58,6 +59,7 @@ class Client(Generic[AnyStr]):
         min_connections: int = ...,
         max_connections: int = ...,
         blocking_timeout: float = ...,
+        idle_connection_timeout: float = ...,
         connection_pool: Pool | None = ...,
         connect_timeout: float | None = ...,
         read_timeout: float | None = ...,
@@ -79,6 +81,7 @@ class Client(Generic[AnyStr]):
         min_connections: int = ...,
         max_connections: int = ...,
         blocking_timeout: float = ...,
+        idle_connection_timeout: float = ...,
         connection_pool: Pool | None = ...,
         connect_timeout: float | None = ...,
         read_timeout: float | None = ...,
@@ -99,6 +102,7 @@ class Client(Generic[AnyStr]):
         min_connections: int = MIN_CONNECTIONS,
         max_connections: int = MAX_CONNECTIONS,
         blocking_timeout: float = BLOCKING_TIMEOUT,
+        idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
         connection_pool: Pool | None = None,
         connect_timeout: float | None = CONNECT_TIMEOUT,
         read_timeout: float | None = READ_TIMEOUT,
@@ -121,6 +125,8 @@ class Client(Generic[AnyStr]):
         :param max_connections: The maximum number of simultaneous connections to memcached.
         :param min_connections: The minimum number of connections to keep in the pool.
         :param blocking_timeout: The timeout (in seconds) to wait for a connection to become available.
+        :param idle_connection_timeout: The maximum time to allow a connection to remain idle in the pool
+         before being disconnected
         :param connection_pool: An optional pre-initialized connection pool. If provided, memcached_location must be None.
         :param connect_timeout: Timeout (in seconds) for establishing a connection.
         :param read_timeout: Timeout (in seconds) for reading from a connection.
@@ -139,6 +145,7 @@ class Client(Generic[AnyStr]):
                 min_connections=min_connections,
                 max_connections=max_connections,
                 blocking_timeout=blocking_timeout,
+                idle_connection_timeout=idle_connection_timeout,
                 connect_timeout=connect_timeout,
                 read_timeout=read_timeout,
                 socket_nodelay=socket_nodelay,

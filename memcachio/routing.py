@@ -16,14 +16,32 @@ class KeyRouter:
         nodes: set[SingleMemcachedInstanceLocator] | None = None,
         hasher: Callable[[str], int] | None = None,
     ) -> None:
+        """
+        Rendezvous Hashing implementation to route keys to memcached
+        nodes.
+
+        :param nodes: set of memcached nodes that are candidates
+        :param hasher: function to use to hash a key to a node. If not
+         provided, a default implementation using :func:`hashlib.md5` from
+         the standard library will be used.
+        """
         self._hasher = hasher or md5_hasher
         self.nodes: set[SingleMemcachedInstanceLocator] = nodes or set()
 
     def add_node(self, node: SingleMemcachedInstanceLocator) -> None:
+        """
+        Add a node to the set of candidate nodes
+        """
         self.nodes.add(node)
 
     def remove_node(self, node: SingleMemcachedInstanceLocator) -> None:
+        """
+        Remove a node from the set of candidate nodes
+        """
         self.nodes.discard(node)
 
     def get_node(self, key: str) -> SingleMemcachedInstanceLocator:
+        """
+        Get the node associated with ``key``
+        """
         return max(self.nodes, key=lambda node: self._hasher(f"{node}:{key}"))

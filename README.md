@@ -8,8 +8,16 @@
 
 ______________________________________________________________________
 
-A pure python async client for Memcached with support for
-single (TCP or UDS) or multiple hosts
+A pure python async Memcached client with **0** dependencies
+with support for:
+
+- All memcached commands
+- Memcached servers serving on TCP or Unix Domain Sockets
+- Memcached clusters
+- SSL transport
+- SASL Authentication
+- Connection reuse for multiple concurrent requests
+- Dynamically adjusted connection pooling
 ______________________________________________________________________
 
 ## Installation
@@ -61,6 +69,9 @@ async def example() -> None:
 
 asyncio.run(example())
 ```
+
+See [Client](https://memcachio.readthedocs.io/en/stable/api.html#memcachio.Client)
+for detailed descriptions of available options when constructing a client.
 
 ## Compatibility
 

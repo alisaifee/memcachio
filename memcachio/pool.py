@@ -5,7 +5,7 @@ import time
 import weakref
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import suppress
 from typing import Any, TypeVar, Unpack, cast
 
@@ -36,6 +36,11 @@ R = TypeVar("R")
 
 
 class Pool(ABC):
+    """
+    The abstract base class for a connection pool used by
+    :class:`~memcachio.Client`
+    """
+
     def __init__(
         self,
         locator: MemcachedLocator,
@@ -45,6 +50,16 @@ class Pool(ABC):
         idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
         **connection_args: Unpack[ConnectionParams],
     ):
+        """
+        :param locator: The memcached server address(es)
+        :param min_connections: The minimum number of connections to keep in the pool.
+        :param max_connections: The maximum number of simultaneous connections to memcached.
+        :param blocking_timeout: The timeout (in seconds) to wait for a connection to become available.
+        :param idle_connection_timeout: The maximum time to allow a connection to remain idle in the pool
+         before being disconnected
+        :param connection_args: Arguments to pass to the constructor of :class:`~memcachio.BaseConnection`.
+         refer to :class:`~memcachio.connection.ConnectionParams`
+        """
         self.locator = normalize_locator(locator)
         self._max_connections = max_connections
         self._min_connections = min_connections
@@ -53,9 +68,19 @@ class Pool(ABC):
         self._connection_parameters: ConnectionParams = connection_args
 
     @abstractmethod
-    def close(self) -> None: ...
+    def close(self) -> None:
+        """
+        Closes the connection pool and disconnects all active connections
+        """
+        ...
 
-    async def execute_command(self, command: Command[R]) -> None: ...
+    async def execute_command(self, command: Command[R]) -> None:
+        """
+        Dispatches a command to memcached. To receive the response the future
+        pointed to by ``command.response`` should be awaited as it will be updated
+        when the response (or exception) is available on the transport.
+        """
+        ...
 
     @classmethod
     def from_locator(
@@ -67,6 +92,12 @@ class Pool(ABC):
         idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
         **connection_args: Unpack[ConnectionParams],
     ) -> Pool:
+        """
+        Returns either a :class:`~memcachio.SingleServerPool` or :class:`~memcachio.ClusterPool`
+        depending on whether ``locator`` is a single instance or a collection of servers
+
+        :meta private:
+        """
         kls: type[Pool]
         if is_single_server(locator):
             kls = SingleServerPool
@@ -87,6 +118,11 @@ class Pool(ABC):
 
 
 class SingleServerPool(Pool):
+    """
+    Connection pool to manage connections to a single memcached
+    server instance.
+    """
+
     def __init__(
         self,
         locator: SingleMemcachedInstanceLocator,
@@ -212,6 +248,14 @@ class SingleServerPool(Pool):
 
 
 class ClusterPool(Pool):
+    """
+    Connection pool to manage connections to a multiple memcached
+    server instances.
+
+    For multi-key commands, rendezvous hashing is used to distribute the command
+    to the appropriate nodes.
+    """
+
     def __init__(
         self,
         locator: Sequence[SingleMemcachedInstanceLocator],
@@ -219,8 +263,22 @@ class ClusterPool(Pool):
         max_connections: int = MAX_CONNECTIONS,
         blocking_timeout: float = BLOCKING_TIMEOUT,
         idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
+        hashing_function: Callable[[str], int] | None = None,
         **connection_args: Unpack[ConnectionParams],
     ) -> None:
+        """
+        :param locator: The memcached server address(es)
+        :param min_connections: The minimum number of connections per node to keep in the pool.
+        :param max_connections: The maximum number of simultaneous connections per  memcached node.
+        :param blocking_timeout: The timeout (in seconds) to wait for a connection to become available.
+        :param idle_connection_timeout: The maximum time to allow a connection to remain idle in the pool
+         before being disconnected
+        :param hashing_function: A function to use for routing keys to
+         nodes for multi-key commands. If none is provided the default
+         :func:`hashlib.md5` implementation from the standard library is used.
+        :param connection_args: Arguments to pass to the constructor of :class:`~memcachio.BaseConnection`.
+         refer to :class:`~memcachio.connection.ConnectionParams`
+        """
         self._cluster_pools: dict[SingleMemcachedInstanceLocator, SingleServerPool] = {}
         self._pool_lock = asyncio.Lock()
         self._initialized = False
@@ -232,7 +290,7 @@ class ClusterPool(Pool):
             idle_connection_timeout=idle_connection_timeout,
             **connection_args,
         )
-        self._router = KeyRouter(self.nodes)
+        self._router = KeyRouter(self.nodes, hasher=hashing_function)
 
     @property
     def nodes(self) -> set[SingleMemcachedInstanceLocator]:
@@ -258,6 +316,12 @@ class ClusterPool(Pool):
             self._initialized = True
 
     async def execute_command(self, command: Command[R]) -> None:
+        """
+        Dispatches a command to the appropriate memcached node(s).
+        To receive the response the future pointed to by ``command.response`` should be awaited
+        as it will be updated when the response(s) (or exception) are available on the transport
+        and merged (if it is a command that spans multiple nodes).
+        """
         mapping = defaultdict(list)
         await self.initialize()
         if command.keys:

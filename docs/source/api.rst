@@ -44,8 +44,30 @@ Exception types
  :no-inherited-members:
 
 Types
--------------------
+-----
 .. automodule:: memcachio.types
    :no-inherited-members:
 .. autoclass:: memcachio.connection.ConnectionParams
    :no-inherited-members:
+   :class-doc-from: both
+
+Implementation Details
+----------------------
+
+-------------
+Command Types
+-------------
+.. autoclass:: memcachio.commands.Command
+   :no-inherited-members:
+   :class-doc-from: both
+
+.. autoclass:: memcachio.commands.Request
+   :no-inherited-members:
+   :class-doc-from: both
+
+-------
+Routing
+-------
+
+.. autoclass:: memcachio.routing.KeyRouter
+   :class-doc-from: both
