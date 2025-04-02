@@ -41,6 +41,9 @@ class TestClient:
 
     async def test_client_from_custom_pool(self, memcached_1):
         class MyPool(Pool):
+            async def initialize(self) -> None:
+                pass
+
             def close(self) -> None:
                 pass
 

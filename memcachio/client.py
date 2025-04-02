@@ -8,6 +8,7 @@ from typing import (
     Literal,
     ParamSpec,
     TypeVar,
+    Unpack,
     overload,
 )
 
@@ -31,6 +32,7 @@ from memcachio.commands import (
     TouchCommand,
     VersionCommand,
 )
+from memcachio.connection import ConnectionParams
 from memcachio.defaults import (
     BLOCKING_TIMEOUT,
     CONNECT_TIMEOUT,
@@ -42,8 +44,8 @@ from memcachio.defaults import (
     MIN_CONNECTIONS,
     READ_TIMEOUT,
 )
-from memcachio.pool import Pool
-from memcachio.types import KeyT, MemcachedItem, MemcachedLocator, ValueT
+from memcachio.pool import ClusterPool, Pool, SingleServerPool
+from memcachio.types import KeyT, MemcachedItem, MemcachedLocator, ValueT, is_single_server
 
 R = TypeVar("R")
 P = ParamSpec("P")
@@ -155,7 +157,7 @@ class Client(Generic[AnyStr]):
         :raises ValueError: If both or neither memcached_location and connection_pool are provided.
         """
         if memcached_location and not connection_pool:
-            self.connection_pool = Pool.from_locator(
+            self.connection_pool = Client.pool_from_locator(
                 memcached_location,
                 min_connections=min_connections,
                 max_connections=max_connections,
@@ -183,6 +185,40 @@ class Client(Generic[AnyStr]):
             raise ValueError("One of `memcached_location` or `connection_pool` must be provided")
         self.decode_responses = decode_responses
         self.encoding = encoding
+
+    @classmethod
+    def pool_from_locator(
+        cls,
+        locator: MemcachedLocator,
+        min_connections: int = MIN_CONNECTIONS,
+        max_connections: int = MAX_CONNECTIONS,
+        blocking_timeout: float = BLOCKING_TIMEOUT,
+        idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
+        hashing_function: Callable[[str], int] | None = None,
+        **connection_args: Unpack[ConnectionParams],
+    ) -> Pool:
+        """
+        Returns either a :class:`~memcachio.SingleServerPool` or :class:`~memcachio.ClusterPool`
+        depending on whether ``locator`` is a single instance or a collection of servers
+
+        :meta private:
+        """
+        kls: type[Pool]
+        extra_args = {}
+        if is_single_server(locator):
+            kls = SingleServerPool
+        else:
+            kls = ClusterPool
+            extra_args["hashing_function"] = hashing_function
+        return kls(
+            locator,
+            min_connections=min_connections,
+            max_connections=max_connections,
+            blocking_timeout=blocking_timeout,
+            idle_connection_timeout=idle_connection_timeout,
+            **extra_args,
+            **connection_args,
+        )
 
     async def execute_command(self, command: Command[R]) -> None:
         """

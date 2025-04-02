@@ -67,40 +67,6 @@ class Pool(ABC):
         self._idle_connection_timeout = idle_connection_timeout
         self._connection_parameters: ConnectionParams = connection_args
 
-    @classmethod
-    def from_locator(
-        cls,
-        locator: MemcachedLocator,
-        min_connections: int = MIN_CONNECTIONS,
-        max_connections: int = MAX_CONNECTIONS,
-        blocking_timeout: float = BLOCKING_TIMEOUT,
-        idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
-        hashing_function: Callable[[str], int] | None = None,
-        **connection_args: Unpack[ConnectionParams],
-    ) -> Pool:
-        """
-        Returns either a :class:`~memcachio.SingleServerPool` or :class:`~memcachio.ClusterPool`
-        depending on whether ``locator`` is a single instance or a collection of servers
-
-        :meta private:
-        """
-        kls: type[Pool]
-        extra_args = {}
-        if is_single_server(locator):
-            kls = SingleServerPool
-        else:
-            kls = ClusterPool
-            extra_args["hashing_function"] = hashing_function
-        return kls(
-            locator,
-            min_connections=min_connections,
-            max_connections=max_connections,
-            blocking_timeout=blocking_timeout,
-            idle_connection_timeout=idle_connection_timeout,
-            **extra_args,
-            **connection_args,
-        )
-
     async def execute_command(self, command: Command[R]) -> None:
         """
         Dispatches a command to memcached. To receive the response the future

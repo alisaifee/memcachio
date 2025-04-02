@@ -7,7 +7,7 @@ from unittest.mock import ANY, call
 import pytest
 from pytest_lazy_fixtures import lf
 
-from memcachio import BaseConnection, ClusterPool, Pool, SingleServerPool
+from memcachio import BaseConnection, ClusterPool, SingleServerPool
 from memcachio.commands import FlushAllCommand, GetCommand, SetCommand, TouchCommand, VersionCommand
 from memcachio.errors import ConnectionNotAvailable
 from tests.conftest import pypy_flaky_marker
@@ -20,14 +20,8 @@ pytestmark = pypy_flaky_marker()
     [pytest.param(lf(target)) for target in ["memcached_1", "memcached_uds"]],
 )
 class TestSingleInstancePool:
-    async def test_pool_from_locator(self, locator):
-        pool = Pool.from_locator(locator)
-        with closing(pool):
-            assert isinstance(pool, SingleServerPool)
-            assert locator == pool.locator
-
-    async def test_pool_expansion(self, locator, mocker):
-        pool = Pool.from_locator(
+    async def test_pool_expansion(self, locator):
+        pool = SingleServerPool(
             locator,
             max_connections=4,
             max_inflight_requests_per_connection=0,
@@ -37,8 +31,8 @@ class TestSingleInstancePool:
             await asyncio.gather(*[pool.execute_command(command) for command in commands])
             assert len(pool._active_connections) == 4
 
-    async def test_blocking_timeout(self, locator, mocker):
-        pool = Pool.from_locator(
+    async def test_blocking_timeout(self, locator):
+        pool = SingleServerPool(
             locator,
             max_connections=1,
             blocking_timeout=0.001,
@@ -53,7 +47,7 @@ class TestSingleInstancePool:
                 await asyncio.gather(*[pool.execute_command(GetCommand("key")) for i in range(16)])
 
     async def test_idle_connection_timeout(self, locator):
-        pool = Pool.from_locator(
+        pool = SingleServerPool(
             locator,
             max_connections=10,
             min_connections=4,
@@ -86,14 +80,8 @@ class TestSingleInstancePool:
     ],
 )
 class TestClusterPool:
-    async def test_cluster_pool_from_locator(self, cluster_locator):
-        pool = Pool.from_locator(cluster_locator)
-        with closing(pool):
-            assert isinstance(pool, ClusterPool)
-            assert cluster_locator == pool.locator
-
     async def test_cluster_pool_single_key_command(self, cluster_locator, mocker):
-        pool = Pool.from_locator(cluster_locator)
+        pool = ClusterPool(cluster_locator)
         with closing(pool):
             command = TouchCommand("key", expiry=1)
             send = mocker.spy(BaseConnection, "send")
@@ -102,14 +90,14 @@ class TestClusterPool:
             send.assert_called_once_with(ANY, b"touch key 1\r\n")
 
     async def test_cluster_pool_multi_key_command(self, cluster_locator):
-        pool = Pool.from_locator(cluster_locator)
+        pool = ClusterPool(cluster_locator)
         with closing(pool):
             await asyncio.gather(
                 *[pool.execute_command(SetCommand(f"key{i}", i, noreply=True)) for i in range(1024)]
             )
 
     async def test_cluster_pool_keyless_command(self, cluster_locator, mocker):
-        pool = Pool.from_locator(cluster_locator)
+        pool = ClusterPool(cluster_locator)
         with closing(pool):
             command = FlushAllCommand(0)
             send = mocker.spy(BaseConnection, "send")
