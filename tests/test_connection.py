@@ -4,9 +4,10 @@ import asyncio
 from io import BytesIO
 
 import pytest
+from pytest_lazy_fixtures import lf
 
 import memcachio
-from memcachio import UnixSocketConnection
+from memcachio import TCPConnection, UnixSocketConnection
 from memcachio.commands import Command, FlushAllCommand, GetCommand, R, Request, SetCommand
 from memcachio.errors import ClientError, MemcachioConnectionError, ServerError
 from tests.conftest import flush_server
@@ -116,3 +117,21 @@ class TestConnectionErrors:
         connection.create_request(bad_command)
         with pytest.raises(ClientError, match="bad data chunk"):
             await bad_command.response
+
+    @pytest.mark.parametrize(
+        "locator",
+        [pytest.param(lf(target)) for target in ["memcached_1", "memcached_uds"]],
+    )
+    async def test_abrupt_disconnection(self, locator):
+        if isinstance(locator, tuple):
+            connection = TCPConnection(locator)
+        else:
+            connection = UnixSocketConnection(locator)
+        await connection.connect()
+        commands = [SetCommand(f"key{i}", bytes(32 * 1024)) for i in range(4096)]
+        asyncio.get_running_loop().call_soon(connection.disconnect)
+        [connection.create_request(command) for command in commands]
+        responses = await asyncio.gather(
+            *[command.response for command in commands], return_exceptions=True
+        )
+        assert not all([k is True for k in responses])
