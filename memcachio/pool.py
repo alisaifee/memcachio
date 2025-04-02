@@ -195,7 +195,7 @@ class SingleServerPool(Pool):
             and connection.metrics.requests_pending == 0
             and len(self._active_connections) > self._min_connections
         ):
-            connection.disconnect()
+            connection.close()
             self._active_connections.remove(connection)
         elif connection.connected:
             asyncio.get_running_loop().call_later(
@@ -235,7 +235,7 @@ class SingleServerPool(Pool):
         while True:
             try:
                 if connection := self._connections.get_nowait():
-                    connection.disconnect()
+                    connection.close()
             except asyncio.QueueEmpty:
                 break
         self._initialized = False

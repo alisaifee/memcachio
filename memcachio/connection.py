@@ -222,7 +222,7 @@ class BaseConnection(BaseProtocol, ABC):
         self._transport.write(data)
         self.metrics.last_written = time.time()
 
-    def disconnect(self) -> None:
+    def close(self) -> None:
         """
         Disconnect from the memcached server and clear internal
         state.

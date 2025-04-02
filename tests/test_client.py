@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ssl
+from contextlib import closing
 
 import pytest
 
@@ -51,10 +52,11 @@ class TestClient:
 
     async def test_sasl_authentication(selfself, memcached_sasl):
         client = memcachio.Client(memcached_sasl)
-        with pytest.raises(ClientError, match="unauthenticated"):
+        with closing(client.connection_pool):
+            with pytest.raises(ClientError, match="unauthenticated"):
+                await client.get("test")
+            client = memcachio.Client(memcached_sasl, username="user", password="wrong")
+            with pytest.raises(ClientError, match="authentication failure"):
+                await client.get("test")
+            client = memcachio.Client(memcached_sasl, username="user", password="password")
             await client.get("test")
-        client = memcachio.Client(memcached_sasl, username="user", password="wrong")
-        with pytest.raises(ClientError, match="authentication failure"):
-            await client.get("test")
-        client = memcachio.Client(memcached_sasl, username="user", password="password")
-        await client.get("test")

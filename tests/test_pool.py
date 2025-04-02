@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 from unittest.mock import ANY, call
 
 import pytest
@@ -21,9 +22,9 @@ pytestmark = pypy_flaky_marker()
 class TestSingleInstancePool:
     async def test_pool_from_locator(self, locator):
         pool = Pool.from_locator(locator)
-        assert isinstance(pool, SingleServerPool)
-        assert locator == pool.locator
-        pool.close()
+        with closing(pool):
+            assert isinstance(pool, SingleServerPool)
+            assert locator == pool.locator
 
     async def test_pool_expansion(self, locator, mocker):
         pool = Pool.from_locator(
@@ -31,10 +32,10 @@ class TestSingleInstancePool:
             max_connections=4,
             max_inflight_requests_per_connection=0,
         )
-        commands = [VersionCommand() for _ in range(16)]
-        await asyncio.gather(*[pool.execute_command(command) for command in commands])
-        assert len(pool._active_connections) == 4
-        pool.close()
+        with closing(pool):
+            commands = [VersionCommand() for _ in range(16)]
+            await asyncio.gather(*[pool.execute_command(command) for command in commands])
+            assert len(pool._active_connections) == 4
 
     async def test_blocking_timeout(self, locator, mocker):
         pool = Pool.from_locator(
@@ -43,13 +44,13 @@ class TestSingleInstancePool:
             blocking_timeout=0.001,
             max_inflight_requests_per_connection=0,
         )
-        await pool.execute_command(SetCommand("key", bytes(4096), noreply=True))
+        with closing(pool):
+            await pool.execute_command(SetCommand("key", bytes(4096), noreply=True))
 
-        with pytest.raises(
-            ConnectionNotAvailable, match="Unable to get a connection.*in 0.001 seconds"
-        ):
-            await asyncio.gather(*[pool.execute_command(GetCommand("key")) for i in range(16)])
-        pool.close()
+            with pytest.raises(
+                ConnectionNotAvailable, match="Unable to get a connection.*in 0.001 seconds"
+            ):
+                await asyncio.gather(*[pool.execute_command(GetCommand("key")) for i in range(16)])
 
     async def test_idle_connection_timeout(self, locator):
         pool = Pool.from_locator(
@@ -59,18 +60,18 @@ class TestSingleInstancePool:
             max_inflight_requests_per_connection=0,
             idle_connection_timeout=0.5,
         )
-        set_command = SetCommand("key", bytes(1024))
-        await pool.execute_command(set_command)
-        await set_command.response
+        with closing(pool):
+            set_command = SetCommand("key", bytes(1024))
+            await pool.execute_command(set_command)
+            await set_command.response
 
-        gets = [GetCommand("key") for _ in range(1024)]
-        await asyncio.gather(*[pool.execute_command(get_command) for get_command in gets])
-        await asyncio.gather(*[get_command.response for get_command in gets])
+            gets = [GetCommand("key") for _ in range(1024)]
+            await asyncio.gather(*[pool.execute_command(get_command) for get_command in gets])
+            await asyncio.gather(*[get_command.response for get_command in gets])
 
-        assert len(pool._active_connections) == 10
-        await asyncio.sleep(1.5)
-        assert len(pool._active_connections) == 4
-        pool.close()
+            assert len(pool._active_connections) == 10
+            await asyncio.sleep(1.5)
+            assert len(pool._active_connections) == 4
 
 
 @pytest.mark.parametrize(
@@ -87,36 +88,36 @@ class TestSingleInstancePool:
 class TestClusterPool:
     async def test_cluster_pool_from_locator(self, cluster_locator):
         pool = Pool.from_locator(cluster_locator)
-        assert isinstance(pool, ClusterPool)
-        assert cluster_locator == pool.locator
-        pool.close()
+        with closing(pool):
+            assert isinstance(pool, ClusterPool)
+            assert cluster_locator == pool.locator
 
     async def test_cluster_pool_single_key_command(self, cluster_locator, mocker):
         pool = Pool.from_locator(cluster_locator)
-        command = TouchCommand("key", expiry=1)
-        send = mocker.spy(BaseConnection, "send")
-        await pool.execute_command(command)
+        with closing(pool):
+            command = TouchCommand("key", expiry=1)
+            send = mocker.spy(BaseConnection, "send")
+            await pool.execute_command(command)
 
-        send.assert_called_once_with(ANY, b"touch key 1\r\n")
-        pool.close()
+            send.assert_called_once_with(ANY, b"touch key 1\r\n")
 
     async def test_cluster_pool_multi_key_command(self, cluster_locator):
         pool = Pool.from_locator(cluster_locator)
-        await asyncio.gather(
-            *[pool.execute_command(SetCommand(f"key{i}", i, noreply=True)) for i in range(1024)]
-        )
-        pool.close()
+        with closing(pool):
+            await asyncio.gather(
+                *[pool.execute_command(SetCommand(f"key{i}", i, noreply=True)) for i in range(1024)]
+            )
 
     async def test_cluster_pool_keyless_command(self, cluster_locator, mocker):
         pool = Pool.from_locator(cluster_locator)
-        command = FlushAllCommand(0)
-        send = mocker.spy(BaseConnection, "send")
-        await pool.execute_command(command)
-        send.assert_has_calls(
-            [
-                call(ANY, b"flush_all 0\r\n"),
-            ]
-            * len(cluster_locator)
-        )
-        assert await command.response
-        pool.close()
+        with closing(pool):
+            command = FlushAllCommand(0)
+            send = mocker.spy(BaseConnection, "send")
+            await pool.execute_command(command)
+            send.assert_has_calls(
+                [
+                    call(ANY, b"flush_all 0\r\n"),
+                ]
+                * len(cluster_locator)
+            )
+            assert await command.response
