@@ -329,13 +329,12 @@ class BaseConnection(BaseProtocol, ABC):
 
     def __on_disconnect(self, from_server: bool = False, reason: str | None = None) -> None:
         self._write_ready.clear()
-        if not self._transport:
-            return
-        else:
+        if self._transport:
             try:
                 self._transport.close()
             except RuntimeError:
                 pass
+            self._transport = None
 
         while True:
             try:
@@ -347,8 +346,9 @@ class BaseConnection(BaseProtocol, ABC):
                     request.command.response.set_exception(exc)
             except IndexError:
                 break
+
         self._buffer = BytesIO()
-        self._transport = None
+
         if from_server:
             with suppress(RuntimeError):
                 [cb(self) for cb in self._disconnect_callbacks]
