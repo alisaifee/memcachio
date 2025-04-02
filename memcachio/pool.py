@@ -67,21 +67,6 @@ class Pool(ABC):
         self._idle_connection_timeout = idle_connection_timeout
         self._connection_parameters: ConnectionParams = connection_args
 
-    @abstractmethod
-    def close(self) -> None:
-        """
-        Closes the connection pool and disconnects all active connections
-        """
-        ...
-
-    async def execute_command(self, command: Command[R]) -> None:
-        """
-        Dispatches a command to memcached. To receive the response the future
-        pointed to by ``command.response`` should be awaited as it will be updated
-        when the response (or exception) is available on the transport.
-        """
-        ...
-
     @classmethod
     def from_locator(
         cls,
@@ -115,6 +100,30 @@ class Pool(ABC):
             **extra_args,
             **connection_args,
         )
+
+    async def execute_command(self, command: Command[R]) -> None:
+        """
+        Dispatches a command to memcached. To receive the response the future
+        pointed to by ``command.response`` should be awaited as it will be updated
+        when the response (or exception) is available on the transport.
+        """
+        ...
+
+    @abstractmethod
+    def close(self) -> None:
+        """
+        Closes the connection pool and disconnects all active connections
+        """
+        ...
+
+    @abstractmethod
+    async def initialize(self) -> None:
+        """
+        Initialize the connection pool. The method can throw
+        a connection error if the target server(s) can't be connected
+        to.
+        """
+        ...
 
     def __del__(self) -> None:
         with suppress(RuntimeError):
@@ -163,6 +172,18 @@ class SingleServerPool(Pool):
             except asyncio.QueueFull:
                 break
 
+    async def initialize(self) -> None:
+        if self._initialized:
+            return
+        async with self._pool_lock:
+            if self._initialized:
+                return
+            for _ in range(self._min_connections):
+                connection = self._connections.get_nowait()
+                if not connection:
+                    self._connections.put_nowait(await self._create_connection())
+            self._initialized = True
+
     async def execute_command(self, command: Command[R]) -> None:
         connection, release = None, None
         connection, release = await self.acquire(command)
@@ -176,44 +197,6 @@ class SingleServerPool(Pool):
                 command.response.add_done_callback(
                     lambda _: self._connections.put_nowait(connection)
                 )
-
-    async def _create_connection(self) -> BaseConnection:
-        connection: BaseConnection | None = None
-        if is_single_server(self.locator):
-            if isinstance(self.locator, UnixSocketLocator):
-                connection = UnixSocketConnection(self.locator, **self._connection_parameters)
-            else:
-                connection = TCPConnection(self.locator, **self._connection_parameters)
-        assert connection
-        if not connection.connected:
-            await connection.connect()
-        return connection
-
-    def __check_connection_idle(self, connection: BaseConnection) -> None:
-        if (
-            time.time() - connection.metrics.last_read > self._idle_connection_timeout
-            and connection.metrics.requests_pending == 0
-            and len(self._active_connections) > self._min_connections
-        ):
-            connection.close()
-            self._active_connections.remove(connection)
-        elif connection.connected:
-            asyncio.get_running_loop().call_later(
-                self._idle_connection_timeout, self.__check_connection_idle, connection
-            )
-
-    async def initialize(self) -> None:
-        if self._initialized:
-            return
-        async with self._pool_lock:
-            if self._initialized:
-                return
-            for _ in range(self._min_connections):
-                connection = self._connections.get_nowait()
-                if not connection:
-                    self._connections.put_nowait(await self._create_connection())
-
-            self._initialized = True
 
     async def acquire(self, command: Command[Any]) -> tuple[BaseConnection, bool]:
         await self.initialize()
@@ -240,8 +223,30 @@ class SingleServerPool(Pool):
                 break
         self._initialized = False
 
-    def __on_connection_disconnected(self, connection: BaseConnection) -> None:
-        self._active_connections.remove(connection)
+    async def _create_connection(self) -> BaseConnection:
+        connection: BaseConnection | None = None
+        if is_single_server(self.locator):
+            if isinstance(self.locator, UnixSocketLocator):
+                connection = UnixSocketConnection(self.locator, **self._connection_parameters)
+            else:
+                connection = TCPConnection(self.locator, **self._connection_parameters)
+        assert connection
+        if not connection.connected:
+            await connection.connect()
+        return connection
+
+    def __check_connection_idle(self, connection: BaseConnection) -> None:
+        if (
+            time.time() - connection.metrics.last_read > self._idle_connection_timeout
+            and connection.metrics.requests_pending == 0
+            and len(self._active_connections) > self._min_connections
+        ):
+            connection.close()
+            self._active_connections.remove(connection)
+        elif connection.connected:
+            asyncio.get_running_loop().call_later(
+                self._idle_connection_timeout, self.__check_connection_idle, connection
+            )
 
     def __on_connection_created(self, connection: BaseConnection) -> None:
         self._active_connections.add(connection)
@@ -249,6 +254,9 @@ class SingleServerPool(Pool):
             asyncio.get_running_loop().call_later(
                 self._idle_connection_timeout, self.__check_connection_idle, connection
             )
+
+    def __on_connection_disconnected(self, connection: BaseConnection) -> None:
+        self._active_connections.remove(connection)
 
 
 class ClusterPool(Pool):
@@ -315,7 +323,6 @@ class ClusterPool(Pool):
                     idle_connection_timeout=self._idle_connection_timeout,
                     **self._connection_parameters,
                 )
-
             await asyncio.gather(*[pool.initialize() for pool in self._cluster_pools.values()])
             self._initialized = True
 
