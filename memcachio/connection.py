@@ -31,7 +31,7 @@ from .defaults import (
     READ_TIMEOUT,
 )
 from .errors import MemcachedError, MemcachioConnectionError, NotEnoughData
-from .types import SingleMemcachedInstanceLocator, TCPLocator, UnixSocketLocator
+from .types import SingleMemcachedInstanceEndpoint, TCPEndpoint, UnixSocketEndpoint
 from .utils import bytestr, decodedstr
 
 R = TypeVar("R")
@@ -135,7 +135,7 @@ class BaseConnection(BaseProtocol, ABC):
     Provides methods for sending commands and reading lines.
     """
 
-    locator: SingleMemcachedInstanceLocator
+    endpoint: SingleMemcachedInstanceEndpoint
     #: Metrics related to this connection
     metrics: ConnectionMetrics
 
@@ -340,7 +340,7 @@ class BaseConnection(BaseProtocol, ABC):
             try:
                 request = self._request_queue.popleft()
                 if not request.command.response.done():
-                    exc = MemcachioConnectionError(reason or "", self.locator)
+                    exc = MemcachioConnectionError(reason or "", self.endpoint)
                     if self._last_error:
                         exc.__cause__ = self._last_error
                     request.command.response.set_exception(exc)
@@ -357,11 +357,11 @@ class BaseConnection(BaseProtocol, ABC):
 class TCPConnection(BaseConnection):
     def __init__(
         self,
-        host_port: TCPLocator | tuple[str, int],
+        host_port: TCPEndpoint | tuple[str, int],
         **kwargs: Unpack[ConnectionParams],
     ) -> None:
         self._host, self._port = host_port
-        self.locator = host_port
+        self.endpoint = host_port
         super().__init__(**kwargs)
 
     async def connect(self) -> None:
@@ -382,7 +382,7 @@ class TCPConnection(BaseConnection):
                             )
                     except (OSError, TimeoutError) as e:
                         msg = f"Unable to establish a connection within {self._connect_timeout} seconds"
-                        raise MemcachioConnectionError(msg, self.locator) from e
+                        raise MemcachioConnectionError(msg, self.endpoint) from e
                     await self._write_ready.wait()
                     if self._auth:
                         await self._authenticate()
@@ -391,10 +391,10 @@ class TCPConnection(BaseConnection):
 class UnixSocketConnection(BaseConnection):
     def __init__(
         self,
-        path: UnixSocketLocator,
+        path: UnixSocketEndpoint,
         **kwargs: Unpack[ConnectionParams],
     ) -> None:
-        self.locator = self._path = str(Path(path).expanduser().absolute())
+        self.endpoint = self._path = str(Path(path).expanduser().absolute())
         super().__init__(**kwargs)
 
     async def connect(self) -> None:
@@ -412,6 +412,6 @@ class UnixSocketConnection(BaseConnection):
                             )
                     except (OSError, TimeoutError) as e:
                         msg = f"Unable to establish a connection within {self._connect_timeout} seconds"
-                        raise MemcachioConnectionError(msg, self.locator) from e
+                        raise MemcachioConnectionError(msg, self.endpoint) from e
                     await self._write_ready.wait()
                     await self._authenticate()

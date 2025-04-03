@@ -11,7 +11,7 @@ KeyT = str | bytes
 ValueT = str | bytes | int
 
 
-class TCPLocator(NamedTuple):
+class TCPEndpoint(NamedTuple):
     """
     Location of a memcached server listening on a tcp port
     """
@@ -23,12 +23,12 @@ class TCPLocator(NamedTuple):
 
 
 #: Path to a memcached server listening on a UDS socket
-UnixSocketLocator = str | Path
+UnixSocketEndpoint = str | Path
 
 #: The total description of a single memcached instance
-SingleMemcachedInstanceLocator = UnixSocketLocator | TCPLocator | tuple[str, int]
+SingleMemcachedInstanceEndpoint = UnixSocketEndpoint | TCPEndpoint | tuple[str, int]
 #: The total description of either a single memcached instance or a memcached cluster
-MemcachedLocator = SingleMemcachedInstanceLocator | Sequence[SingleMemcachedInstanceLocator]
+MemcachedEndpoint = SingleMemcachedInstanceEndpoint | Sequence[SingleMemcachedInstanceEndpoint]
 
 
 @dataclass
@@ -51,32 +51,32 @@ class MemcachedItem(Generic[AnyStr]):
     value: AnyStr
 
 
-def is_single_server(locator: MemcachedLocator) -> TypeGuard[SingleMemcachedInstanceLocator]:
-    if isinstance(locator, (UnixSocketLocator, TCPLocator)):
+def is_single_server(endpoint: MemcachedEndpoint) -> TypeGuard[SingleMemcachedInstanceEndpoint]:
+    if isinstance(endpoint, (UnixSocketEndpoint, TCPEndpoint)):
         return True
     if (
-        isinstance(locator, Sequence)
-        and len(locator) == 2
-        and isinstance(locator[0], str)
-        and isinstance(locator[1], int)
+        isinstance(endpoint, Sequence)
+        and len(endpoint) == 2
+        and isinstance(endpoint[0], str)
+        and isinstance(endpoint[1], int)
     ):
         return True
     return False
 
 
-def normalize_single_server_locator(
-    locator: SingleMemcachedInstanceLocator,
-) -> SingleMemcachedInstanceLocator:
-    if not isinstance(locator, UnixSocketLocator):
-        return TCPLocator(*locator)
-    return locator
+def normalize_single_server_endpoint(
+    endpoint: SingleMemcachedInstanceEndpoint,
+) -> SingleMemcachedInstanceEndpoint:
+    if not isinstance(endpoint, UnixSocketEndpoint):
+        return TCPEndpoint(*endpoint)
+    return endpoint
 
 
-def normalize_locator(locator: MemcachedLocator) -> MemcachedLocator:
-    if is_single_server(locator):
-        return normalize_single_server_locator(locator)
+def normalize_endpoint(endpoint: MemcachedEndpoint) -> MemcachedEndpoint:
+    if is_single_server(endpoint):
+        return normalize_single_server_endpoint(endpoint)
     else:
         return [
-            normalize_single_server_locator(single)
-            for single in cast(Sequence[SingleMemcachedInstanceLocator], locator)
+            normalize_single_server_endpoint(single)
+            for single in cast(Sequence[SingleMemcachedInstanceEndpoint], endpoint)
         ]

@@ -25,17 +25,17 @@ from .defaults import (
     MAX_CONNECTIONS,
     MAXIMUM_RECOVERY_ATTEMPTS,
     MIN_CONNECTIONS,
-    MONITOR_UNHEALTHY_NODES,
-    REMOVE_UNHEALTHY_NODES,
+    MONITOR_UNHEALTHY_ENDPOINTS,
+    REMOVE_UNHEALTHY_ENDPOINTS,
 )
 from .errors import ConnectionNotAvailable, MemcachioConnectionError
 from .routing import KeyRouter
 from .types import (
-    MemcachedLocator,
-    SingleMemcachedInstanceLocator,
-    UnixSocketLocator,
-    normalize_locator,
-    normalize_single_server_locator,
+    MemcachedEndpoint,
+    SingleMemcachedInstanceEndpoint,
+    UnixSocketEndpoint,
+    normalize_endpoint,
+    normalize_single_server_endpoint,
 )
 
 R = TypeVar("R")
@@ -43,26 +43,26 @@ R = TypeVar("R")
 logger = logging.getLogger(__name__)
 
 
-class NodeStatus(enum.IntEnum):
+class EndpointStatus(enum.IntEnum):
     """
-    Enumeration of node statuses.
-    Used by :meth:`~ClusterPool.mark_node`
+    Enumeration of endpoint statuses.
+    Used by :meth:`~ClusterPool.mark_endpoint`
     """
 
-    #: Mark the node as up and usable
+    #: Mark the endpoint as up and usable
     UP = enum.auto()
-    #: Mark the node as down and not in use
+    #: Mark the endpoint as down and not in use
     DOWN = enum.auto()
 
 
 @dataclasses.dataclass
-class NodeHealthcheckConfig:
-    #: Whether to remove unhealthy nodes on connection errors
-    remove_unhealthy_nodes: bool = REMOVE_UNHEALTHY_NODES
-    #: Whether to monitor unhealthy nodes after they have been
+class EndpointHealthcheckConfig:
+    #: Whether to remove unhealthy endpoints on connection errors
+    remove_unhealthy_endpoints: bool = REMOVE_UNHEALTHY_ENDPOINTS
+    #: Whether to monitor unhealthy endpoints after they have been
     #: removed and attempt to restore them if they recover
-    monitor_unhealthy_nodes: bool = MONITOR_UNHEALTHY_NODES
-    #: Maximum attempts to make to recover unhealthy nodes
+    monitor_unhealthy_endpoints: bool = MONITOR_UNHEALTHY_ENDPOINTS
+    #: Maximum attempts to make to recover unhealthy endpoints
     maximum_recovery_attempts: int = MAXIMUM_RECOVERY_ATTEMPTS
 
 
@@ -74,7 +74,7 @@ class Pool(ABC):
 
     def __init__(
         self,
-        locator: MemcachedLocator,
+        endpoint: MemcachedEndpoint,
         min_connections: int = MIN_CONNECTIONS,
         max_connections: int = MAX_CONNECTIONS,
         blocking_timeout: float = BLOCKING_TIMEOUT,
@@ -82,7 +82,7 @@ class Pool(ABC):
         **connection_args: Unpack[ConnectionParams],
     ):
         """
-        :param locator: The memcached server address(es)
+        :param endpoint: The memcached server address(es)
         :param min_connections: The minimum number of connections to keep in the pool.
         :param max_connections: The maximum number of simultaneous connections to memcached.
         :param blocking_timeout: The timeout (in seconds) to wait for a connection to become available.
@@ -91,7 +91,7 @@ class Pool(ABC):
         :param connection_args: Arguments to pass to the constructor of :class:`~memcachio.BaseConnection`.
          refer to :class:`~memcachio.connection.ConnectionParams`
         """
-        self.locator = normalize_locator(locator)
+        self.endpoint = normalize_endpoint(endpoint)
         self._max_connections = max_connections
         self._min_connections = min_connections
         self._blocking_timeout = blocking_timeout
@@ -130,12 +130,12 @@ class Pool(ABC):
 class SingleServerPool(Pool):
     """
     Connection pool to manage connections to a single memcached
-    server instance.
+    server.
     """
 
     def __init__(
         self,
-        locator: SingleMemcachedInstanceLocator,
+        endpoint: SingleMemcachedInstanceEndpoint,
         min_connections: int = MIN_CONNECTIONS,
         max_connections: int = MAX_CONNECTIONS,
         blocking_timeout: float = BLOCKING_TIMEOUT,
@@ -143,14 +143,14 @@ class SingleServerPool(Pool):
         **connection_args: Unpack[ConnectionParams],
     ) -> None:
         super().__init__(
-            locator,
+            endpoint,
             min_connections=min_connections,
             max_connections=max_connections,
             blocking_timeout=blocking_timeout,
             idle_connection_timeout=idle_connection_timeout,
             **connection_args,
         )
-        self._server_locator = locator
+        self._server_endpoint = endpoint
         self._connections: asyncio.Queue[BaseConnection | None] = asyncio.LifoQueue(
             self._max_connections
         )
@@ -223,7 +223,7 @@ class SingleServerPool(Pool):
                     raise
             return connection, not released
         except TimeoutError:
-            raise ConnectionNotAvailable(self._server_locator, self._blocking_timeout)
+            raise ConnectionNotAvailable(self._server_endpoint, self._blocking_timeout)
 
     def close(self) -> None:
         while True:
@@ -241,10 +241,10 @@ class SingleServerPool(Pool):
 
     async def _create_connection(self) -> BaseConnection:
         connection: BaseConnection
-        if isinstance(self._server_locator, UnixSocketLocator):
-            connection = UnixSocketConnection(self._server_locator, **self._connection_parameters)
+        if isinstance(self._server_endpoint, UnixSocketEndpoint):
+            connection = UnixSocketConnection(self._server_endpoint, **self._connection_parameters)
         else:
-            connection = TCPConnection(self._server_locator, **self._connection_parameters)
+            connection = TCPConnection(self._server_endpoint, **self._connection_parameters)
         if not connection.connected:
             await connection.connect()
         return connection
@@ -275,77 +275,77 @@ class SingleServerPool(Pool):
 
 class ClusterPool(Pool):
     """
-    Connection pool to manage connections to a multiple memcached
-    server instances.
+    Connection pool to manage connections to multiple memcached
+    servers.
 
     For multi-key commands, rendezvous hashing is used to distribute the command
-    to the appropriate nodes.
+    to the appropriate endpoints.
     """
 
     def __init__(
         self,
-        locator: Sequence[SingleMemcachedInstanceLocator],
+        endpoint: Sequence[SingleMemcachedInstanceEndpoint],
         min_connections: int = MIN_CONNECTIONS,
         max_connections: int = MAX_CONNECTIONS,
         blocking_timeout: float = BLOCKING_TIMEOUT,
         idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
         hashing_function: Callable[[str], int] | None = None,
-        node_healthcheck_config: NodeHealthcheckConfig | None = None,
+        endpoint_healthcheck_config: EndpointHealthcheckConfig | None = None,
         **connection_args: Unpack[ConnectionParams],
     ) -> None:
         """
-        :param locator: The memcached server address(es)
-        :param min_connections: The minimum number of connections per node to keep in the pool.
-        :param max_connections: The maximum number of simultaneous connections per  memcached node.
+        :param endpoint: The memcached server address(es)
+        :param min_connections: The minimum number of connections per endpoint to keep in the pool.
+        :param max_connections: The maximum number of simultaneous connections per  memcached endpoint.
         :param blocking_timeout: The timeout (in seconds) to wait for a connection to become available.
         :param idle_connection_timeout: The maximum time to allow a connection to remain idle in the pool
          before being disconnected
         :param hashing_function: A function to use for routing keys to
-         nodes for multi-key commands. If none is provided the default
+         endpoints for multi-key commands. If none is provided the default
          :func:`hashlib.md5` implementation from the standard library is used.
-        :param node_healthcheck_config: Node healthcheck configuration to control whether
-         nodes are automatically removed/recovered based on healthchecks.
+        :param endpoint_healthcheck_config: Endpoint healthcheck configuration to control whether
+         endpoints are automatically removed/recovered based on healthchecks.
         :param connection_args: Arguments to pass to the constructor of :class:`~memcachio.BaseConnection`.
          refer to :class:`~memcachio.connection.ConnectionParams`
         """
-        self._cluster_pools: dict[SingleMemcachedInstanceLocator, SingleServerPool] = {}
+        self._cluster_pools: dict[SingleMemcachedInstanceEndpoint, SingleServerPool] = {}
         self._pool_lock = asyncio.Lock()
         self._initialized = False
         super().__init__(
-            locator,
+            endpoint,
             min_connections=min_connections,
             max_connections=max_connections,
             blocking_timeout=blocking_timeout,
             idle_connection_timeout=idle_connection_timeout,
             **connection_args,
         )
-        self._all_nodes: set[SingleMemcachedInstanceLocator] = {
-            normalize_single_server_locator(locator)
-            for locator in cast(Iterable[SingleMemcachedInstanceLocator], self.locator)
+        self._all_endpoints: set[SingleMemcachedInstanceEndpoint] = {
+            normalize_single_server_endpoint(endpoint)
+            for endpoint in cast(Iterable[SingleMemcachedInstanceEndpoint], self.endpoint)
         }
-        self._unhealthy_nodes: set[SingleMemcachedInstanceLocator] = set()
-        self._router = KeyRouter(self._all_nodes, hasher=hashing_function)
-        self._health_check_locks: dict[SingleMemcachedInstanceLocator, asyncio.Lock] = defaultdict(
+        self._unhealthy_endpoints: set[SingleMemcachedInstanceEndpoint] = set()
+        self._router = KeyRouter(self._all_endpoints, hasher=hashing_function)
+        self._health_check_locks: dict[SingleMemcachedInstanceEndpoint, asyncio.Lock] = defaultdict(
             asyncio.Lock
         )
-        self.__node_healthcheck_config: NodeHealthcheckConfig = (
-            node_healthcheck_config or NodeHealthcheckConfig()
+        self.__endpoint_healthcheck_config: EndpointHealthcheckConfig = (
+            endpoint_healthcheck_config or EndpointHealthcheckConfig()
         )
 
     @property
-    def nodes(self) -> set[SingleMemcachedInstanceLocator]:
-        return self._all_nodes - self._unhealthy_nodes
+    def endpoints(self) -> set[SingleMemcachedInstanceEndpoint]:
+        return self._all_endpoints - self._unhealthy_endpoints
 
-    def add_node(self, node: SingleMemcachedInstanceLocator) -> None:
+    def add_endpoint(self, endpoint: SingleMemcachedInstanceEndpoint) -> None:
         """
-        Add a new node to this pool
+        Add a new endpoint to this pool
         """
-        normalized_node = normalize_single_server_locator(node)
-        self._all_nodes.add(normalized_node)
-        self._router.add_node(normalized_node)
-        if normalized_node not in self._cluster_pools:
-            self._cluster_pools[normalized_node] = SingleServerPool(
-                normalized_node,
+        normalized_endpoint = normalize_single_server_endpoint(endpoint)
+        self._all_endpoints.add(normalized_endpoint)
+        self._router.add_node(normalized_endpoint)
+        if normalized_endpoint not in self._cluster_pools:
+            self._cluster_pools[normalized_endpoint] = SingleServerPool(
+                normalized_endpoint,
                 min_connections=self._min_connections,
                 max_connections=self._max_connections,
                 blocking_timeout=self._blocking_timeout,
@@ -353,32 +353,34 @@ class ClusterPool(Pool):
                 **self._connection_parameters,
             )
 
-    def remove_node(self, node: SingleMemcachedInstanceLocator) -> None:
+    def remove_endpoint(self, endpoint: SingleMemcachedInstanceEndpoint) -> None:
         """
-        Remove a node from this pool. This will immediately also close
-        all connections to that node.
+        Remove a endpoint from this pool. This will immediately also close
+        all connections to that endpoint.
         """
-        normalized_node = normalize_single_server_locator(node)
-        self._all_nodes.discard(normalized_node)
-        self._router.remove_node(normalized_node)
-        if pool := self._cluster_pools.pop(normalized_node, None):
+        normalized_endpoint = normalize_single_server_endpoint(endpoint)
+        self._all_endpoints.discard(normalized_endpoint)
+        self._router.remove_node(normalized_endpoint)
+        if pool := self._cluster_pools.pop(normalized_endpoint, None):
             pool.close()
 
-    def mark_node(self, node: SingleMemcachedInstanceLocator, status: NodeStatus) -> None:
+    def mark_endpoint(
+        self, endpoint: SingleMemcachedInstanceEndpoint, status: EndpointStatus
+    ) -> None:
         """
-        Change the status of a node in this pool.
-        Marking a node as :enum:`NodeStatus.DOWN` will immediately stop routing
-        requests to it, while marking it as :enum:`NodeStatus.UP` will immediately
+        Change the status of a endpoint in this pool.
+        Marking a endpoint as :enum:`EndpointStatus.DOWN` will immediately stop routing
+        requests to it, while marking it as :enum:`EndpointStatus.UP` will immediately
         start routing requests to it.
         """
-        normalized_node = normalize_single_server_locator(node)
+        normalized_endpoint = normalize_single_server_endpoint(endpoint)
         match status:
-            case NodeStatus.UP:
-                self._unhealthy_nodes.discard(normalized_node)
-                self._router.add_node(normalized_node)
-            case NodeStatus.DOWN:
-                self._unhealthy_nodes.add(normalized_node)
-                self._router.remove_node(normalized_node)
+            case EndpointStatus.UP:
+                self._unhealthy_endpoints.discard(normalized_endpoint)
+                self._router.add_node(normalized_endpoint)
+            case EndpointStatus.DOWN:
+                self._unhealthy_endpoints.add(normalized_endpoint)
+                self._router.remove_node(normalized_endpoint)
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -386,17 +388,19 @@ class ClusterPool(Pool):
         async with self._pool_lock:
             if self._initialized:
                 return
-            for node in self.nodes:
-                self.add_node(node)
-            await asyncio.gather(*[self._cluster_pools[node].initialize() for node in self.nodes])
+            for endpoint in self.endpoints:
+                self.add_endpoint(endpoint)
+            await asyncio.gather(
+                *[self._cluster_pools[endpoint].initialize() for endpoint in self.endpoints]
+            )
             self._initialized = True
 
     async def execute_command(self, command: Command[R]) -> None:
         """
-        Dispatches a command to the appropriate memcached node(s).
+        Dispatches a command to the appropriate memcached endpoint(s).
         To receive the response the future pointed to by ``command.response`` should be awaited
         as it will be updated when the response(s) (or exception) are available on the transport
-        and merged (if it is a command that spans multiple nodes).
+        and merged (if it is a command that spans multiple endpoints).
         """
         try:
             await self.initialize()
@@ -409,79 +413,85 @@ class ClusterPool(Pool):
                 if command.keys:
                     for key in command.keys:
                         mapping[self._router.get_node(key)].append(key)
-                    node_commands = {node: command.clone(keys) for node, keys in mapping.items()}
+                    endpoint_commands = {
+                        endpoint: command.clone(keys) for endpoint, keys in mapping.items()
+                    }
                 else:
-                    node_commands = {node: command.clone(command.keys) for node in self.nodes}
+                    endpoint_commands = {
+                        endpoint: command.clone(command.keys) for endpoint in self.endpoints
+                    }
                 await asyncio.gather(
                     *[
-                        self._cluster_pools[node].execute_command(node_command)
-                        for node, node_command in node_commands.items()
+                        self._cluster_pools[endpoint].execute_command(endpoint_command)
+                        for endpoint, endpoint_command in endpoint_commands.items()
                     ]
                 )
                 if not command.noreply:
                     command.response.set_result(
                         command.merge(
                             await asyncio.gather(
-                                *[command.response for command in node_commands.values()]
+                                *[command.response for command in endpoint_commands.values()]
                             )
                         )
                     )
         except MemcachioConnectionError as e:
-            if self.__node_healthcheck_config.remove_unhealthy_nodes:
+            if self.__endpoint_healthcheck_config.remove_unhealthy_endpoints:
                 asyncio.get_running_loop().call_soon(
-                    asyncio.create_task, self.__check_node_health(e.instance)
+                    asyncio.create_task, self.__check_endpoint_health(e.endpoint)
                 )
             raise
 
-    async def __check_node_health(
-        self, instance: SingleMemcachedInstanceLocator, attempt: int = 0
+    async def __check_endpoint_health(
+        self, endpoint: SingleMemcachedInstanceEndpoint, attempt: int = 0
     ) -> None:
         if (
-            self._health_check_locks[instance].locked()
-            or instance not in self._cluster_pools
-            or attempt > self.__node_healthcheck_config.maximum_recovery_attempts
+            self._health_check_locks[endpoint].locked()
+            or endpoint not in self._cluster_pools
+            or attempt > self.__endpoint_healthcheck_config.maximum_recovery_attempts
         ):
             return
 
-        async with self._health_check_locks[instance]:
+        async with self._health_check_locks[endpoint]:
             try:
-                if pool := self._cluster_pools.get(instance, None):
+                if pool := self._cluster_pools.get(endpoint, None):
                     await pool.initialize()
                     if any(pool._active_connections):
-                        if self.__node_healthcheck_config.monitor_unhealthy_nodes:
-                            logger.info(f"Node {instance} has recovered after {2**attempt} seconds")
-                            self.mark_node(instance, NodeStatus.UP)
+                        if self.__endpoint_healthcheck_config.monitor_unhealthy_endpoints:
+                            logger.info(
+                                f"Memcached server at {endpoint} has recovered after {2**attempt} seconds"
+                            )
+                            self.mark_endpoint(endpoint, EndpointStatus.UP)
                         return
                     else:
                         pool.close()
             except MemcachioConnectionError:
-                self.mark_node(instance, NodeStatus.DOWN)
+                self.mark_endpoint(endpoint, EndpointStatus.DOWN)
                 if (
-                    not self.__node_healthcheck_config.monitor_unhealthy_nodes
-                    or attempt == self.__node_healthcheck_config.maximum_recovery_attempts
+                    not self.__endpoint_healthcheck_config.monitor_unhealthy_endpoints
+                    or attempt == self.__endpoint_healthcheck_config.maximum_recovery_attempts
                 ):
-                    logger.error(f"Node {instance} unreachable and marked down")
+                    logger.error(f"Memcached server at {endpoint} unreachable and marked down")
                     return
             except Exception:
-                logger.exception("Unknown error while checking node health")
+                logger.exception("Unknown error while checking endpoint health")
                 return
 
         if (
-            instance in self._unhealthy_nodes
-            and self.__node_healthcheck_config.monitor_unhealthy_nodes
-            and attempt < self.__node_healthcheck_config.maximum_recovery_attempts
+            endpoint in self._unhealthy_endpoints
+            and self.__endpoint_healthcheck_config.monitor_unhealthy_endpoints
+            and attempt < self.__endpoint_healthcheck_config.maximum_recovery_attempts
         ):
             delay = 2**attempt
             logger.debug(
-                f"Node {instance} still down, attempting recovery attempt in {delay} seconds"
+                f"Memcached server at {endpoint} still down, attempting recovery attempt in {delay} seconds"
             )
             asyncio.get_running_loop().call_later(
-                delay, asyncio.create_task, self.__check_node_health(instance, attempt + 1)
+                delay, asyncio.create_task, self.__check_endpoint_health(endpoint, attempt + 1)
             )
 
     def close(self) -> None:
         for pool in self._cluster_pools.values():
             pool.close()
-        self._unhealthy_nodes.clear()
+        self._unhealthy_endpoints.clear()
         self._cluster_pools.clear()
         self._initialized = False

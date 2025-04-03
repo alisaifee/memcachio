@@ -4,7 +4,7 @@ import hashlib
 from collections.abc import Callable
 
 from .errors import NoAvailableNodes
-from .types import SingleMemcachedInstanceLocator
+from .types import SingleMemcachedInstanceEndpoint
 
 
 def md5_hasher(key: str) -> int:
@@ -14,7 +14,7 @@ def md5_hasher(key: str) -> int:
 class KeyRouter:
     def __init__(
         self,
-        nodes: set[SingleMemcachedInstanceLocator] | None = None,
+        nodes: set[SingleMemcachedInstanceEndpoint] | None = None,
         hasher: Callable[[str], int] | None = None,
     ) -> None:
         """
@@ -27,21 +27,21 @@ class KeyRouter:
          the standard library will be used.
         """
         self._hasher = hasher or md5_hasher
-        self.nodes: set[SingleMemcachedInstanceLocator] = nodes or set()
+        self.nodes: set[SingleMemcachedInstanceEndpoint] = nodes or set()
 
-    def add_node(self, node: SingleMemcachedInstanceLocator) -> None:
+    def add_node(self, node: SingleMemcachedInstanceEndpoint) -> None:
         """
         Add a node to the set of candidate nodes
         """
         self.nodes.add(node)
 
-    def remove_node(self, node: SingleMemcachedInstanceLocator) -> None:
+    def remove_node(self, node: SingleMemcachedInstanceEndpoint) -> None:
         """
         Remove a node from the set of candidate nodes
         """
         self.nodes.discard(node)
 
-    def get_node(self, key: str) -> SingleMemcachedInstanceLocator:
+    def get_node(self, key: str) -> SingleMemcachedInstanceEndpoint:
         """
         Get the node associated with ``key``
         """

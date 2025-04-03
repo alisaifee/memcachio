@@ -8,8 +8,8 @@ from __future__ import annotations
 from . import _version, defaults, errors
 from .client import Client
 from .connection import BaseConnection, ConnectionParams, TCPConnection, UnixSocketConnection
-from .pool import ClusterPool, NodeHealthcheckConfig, NodeStatus, Pool, SingleServerPool
-from .types import MemcachedItem, MemcachedLocator, TCPLocator
+from .pool import ClusterPool, EndpointHealthcheckConfig, EndpointStatus, Pool, SingleServerPool
+from .types import MemcachedEndpoint, MemcachedItem, TCPEndpoint
 
 __all__ = [
     "BaseConnection",
@@ -17,13 +17,13 @@ __all__ = [
     "ClusterPool",
     "ConnectionParams",
     "MemcachedItem",
-    "MemcachedLocator",
-    "NodeStatus",
-    "NodeHealthcheckConfig",
+    "MemcachedEndpoint",
+    "EndpointStatus",
+    "EndpointHealthcheckConfig",
     "Pool",
     "SingleServerPool",
     "TCPConnection",
-    "TCPLocator",
+    "TCPEndpoint",
     "UnixSocketConnection",
     "defaults",
     "errors",

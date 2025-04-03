@@ -129,14 +129,14 @@ class TestConnectionErrors:
                 await bad_command.response
 
     @pytest.mark.parametrize(
-        "locator",
+        "endpoint",
         [pytest.param(lf(target)) for target in ["memcached_1", "memcached_uds"]],
     )
-    async def test_abrupt_disconnection(self, locator):
-        if isinstance(locator, tuple):
-            connection = TCPConnection(locator)
+    async def test_abrupt_disconnection(self, endpoint):
+        if isinstance(endpoint, tuple):
+            connection = TCPConnection(endpoint)
         else:
-            connection = UnixSocketConnection(locator)
+            connection = UnixSocketConnection(endpoint)
         with closing(connection):
             await connection.connect()
             commands = [SetCommand(f"key{i}", bytes(32 * 1024)) for i in range(4096)]

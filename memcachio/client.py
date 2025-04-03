@@ -44,8 +44,8 @@ from memcachio.defaults import (
     MIN_CONNECTIONS,
     READ_TIMEOUT,
 )
-from memcachio.pool import ClusterPool, NodeHealthcheckConfig, Pool, SingleServerPool
-from memcachio.types import KeyT, MemcachedItem, MemcachedLocator, ValueT, is_single_server
+from memcachio.pool import ClusterPool, EndpointHealthcheckConfig, Pool, SingleServerPool
+from memcachio.types import KeyT, MemcachedEndpoint, MemcachedItem, ValueT, is_single_server
 
 R = TypeVar("R")
 P = ParamSpec("P")
@@ -57,7 +57,7 @@ class Client(Generic[AnyStr]):
     @overload
     def __init__(
         self: Client[str],
-        memcached_location: MemcachedLocator | None = ...,
+        memcached_location: MemcachedEndpoint | None = ...,
         decode_responses: Literal[True] = True,
         encoding: str = ...,
         min_connections: int = ...,
@@ -65,7 +65,7 @@ class Client(Generic[AnyStr]):
         blocking_timeout: float = ...,
         idle_connection_timeout: float = ...,
         hashing_function: Callable[[str], int] | None = ...,
-        node_healthcheck_config: NodeHealthcheckConfig | None = ...,
+        endpoint_healthcheck_config: EndpointHealthcheckConfig | None = ...,
         connection_pool: Pool | None = ...,
         connect_timeout: float | None = ...,
         read_timeout: float | None = ...,
@@ -82,7 +82,7 @@ class Client(Generic[AnyStr]):
     @overload
     def __init__(
         self: Client[bytes],
-        memcached_location: MemcachedLocator | None = ...,
+        memcached_location: MemcachedEndpoint | None = ...,
         decode_responses: Literal[False] = False,
         encoding: str = ...,
         min_connections: int = ...,
@@ -90,7 +90,7 @@ class Client(Generic[AnyStr]):
         blocking_timeout: float = ...,
         idle_connection_timeout: float = ...,
         hashing_function: Callable[[str], int] | None = ...,
-        node_healthcheck_config: NodeHealthcheckConfig | None = ...,
+        endpoint_healthcheck_config: EndpointHealthcheckConfig | None = ...,
         connection_pool: Pool | None = ...,
         connect_timeout: float | None = ...,
         read_timeout: float | None = ...,
@@ -106,7 +106,7 @@ class Client(Generic[AnyStr]):
 
     def __init__(
         self,
-        memcached_location: MemcachedLocator | None = None,
+        memcached_location: MemcachedEndpoint | None = None,
         decode_responses: Literal[True, False] = False,
         encoding: str = ENCODING,
         min_connections: int = MIN_CONNECTIONS,
@@ -114,7 +114,7 @@ class Client(Generic[AnyStr]):
         blocking_timeout: float = BLOCKING_TIMEOUT,
         idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
         hashing_function: Callable[[str], int] | None = None,
-        node_healthcheck_config: NodeHealthcheckConfig | None = None,
+        endpoint_healthcheck_config: EndpointHealthcheckConfig | None = None,
         connection_pool: Pool | None = None,
         connect_timeout: float | None = CONNECT_TIMEOUT,
         read_timeout: float | None = READ_TIMEOUT,
@@ -132,7 +132,7 @@ class Client(Generic[AnyStr]):
 
         Either a memcached location or an existing connection pool must be provided.
 
-        :param memcached_location: The memcached server address(es) or locator configuration.
+        :param memcached_location: The memcached server address(es) or endpoint configuration.
         :param decode_responses: If True, decode responses using the specified encoding; otherwise, responses are returned as bytes.
         :param encoding: The character encoding used when decoding responses.
         :param max_connections: The maximum number of simultaneous connections to memcached.
@@ -140,13 +140,11 @@ class Client(Generic[AnyStr]):
         :param blocking_timeout: The timeout (in seconds) to wait for a connection to become available.
         :param idle_connection_timeout: The maximum time to allow a connection to remain idle in the pool
          before being disconnected
-        :param hashing_function: A function to use for routing keys to nodes for multi-key
+        :param hashing_function: A function to use for routing keys to endpoints for multi-key
          commands. If none is provided the default :func:`hashlib.md5` implementation from the
          standard library is used.
 
          .. note:: This parameter is only relevant when using a cluster
-        :param node_healthcheck_config: Node healthcheck configuration to control whether
-         nodes are automatically removed/recovered based on healthchecks.
         :param connection_pool: An optional pre-initialized connection pool. If provided, memcached_location must be None.
         :param connect_timeout: Timeout (in seconds) for establishing a connection.
         :param read_timeout: Timeout (in seconds) for reading from a connection.
@@ -162,14 +160,14 @@ class Client(Generic[AnyStr]):
         :raises ValueError: If both or neither memcached_location and connection_pool are provided.
         """
         if memcached_location and not connection_pool:
-            self.connection_pool = Client.pool_from_locator(
+            self.connection_pool = Client.pool_from_endpoint(
                 memcached_location,
                 min_connections=min_connections,
                 max_connections=max_connections,
                 blocking_timeout=blocking_timeout,
                 idle_connection_timeout=idle_connection_timeout,
                 hashing_function=hashing_function,
-                node_healthcheck_config=node_healthcheck_config,
+                endpoint_healthcheck_config=endpoint_healthcheck_config,
                 connect_timeout=connect_timeout,
                 read_timeout=read_timeout,
                 socket_nodelay=socket_nodelay,
@@ -193,26 +191,26 @@ class Client(Generic[AnyStr]):
         self.encoding = encoding
 
     @classmethod
-    def pool_from_locator(
+    def pool_from_endpoint(
         cls,
-        locator: MemcachedLocator,
+        endpoint: MemcachedEndpoint,
         min_connections: int = MIN_CONNECTIONS,
         max_connections: int = MAX_CONNECTIONS,
         blocking_timeout: float = BLOCKING_TIMEOUT,
         idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
         hashing_function: Callable[[str], int] | None = None,
-        node_healthcheck_config: NodeHealthcheckConfig | None = None,
+        endpoint_healthcheck_config: EndpointHealthcheckConfig | None = None,
         **connection_args: Unpack[ConnectionParams],
     ) -> Pool:
         """
         Returns either a :class:`~memcachio.SingleServerPool` or :class:`~memcachio.ClusterPool`
-        depending on whether ``locator`` is a single instance or a collection of servers
+        depending on whether ``endpoint`` is a single instance or a collection of servers
 
         :meta private:
         """
-        if is_single_server(locator):
+        if is_single_server(endpoint):
             return SingleServerPool(
-                locator,
+                endpoint,
                 min_connections=min_connections,
                 max_connections=max_connections,
                 blocking_timeout=blocking_timeout,
@@ -221,13 +219,13 @@ class Client(Generic[AnyStr]):
             )
         else:
             return ClusterPool(
-                locator,  # type: ignore[arg-type]
+                endpoint,  # type: ignore[arg-type]
                 min_connections=min_connections,
                 max_connections=max_connections,
                 blocking_timeout=blocking_timeout,
                 idle_connection_timeout=idle_connection_timeout,
                 hashing_function=hashing_function,
-                node_healthcheck_config=node_healthcheck_config,
+                endpoint_healthcheck_config=endpoint_healthcheck_config,
                 **connection_args,
             )
 

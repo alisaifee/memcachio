@@ -12,7 +12,7 @@ import pytest
 from pytest_lazy_fixtures import lf
 
 import memcachio
-from memcachio.types import TCPLocator
+from memcachio.types import TCPEndpoint
 
 
 def pypy_flaky_marker():
@@ -133,7 +133,7 @@ async def memcached_uds_client(memcached_uds, request):
 @pytest.fixture
 async def memcached_tcp_cluster_client(memcached_1, memcached_2, memcached_3, request):
     client = memcachio.Client(
-        [TCPLocator(*memcached_1), TCPLocator(*memcached_2), TCPLocator(*memcached_3)]
+        [TCPEndpoint(*memcached_1), TCPEndpoint(*memcached_2), TCPEndpoint(*memcached_3)]
     )
     await client.flushall()
     yield client
@@ -161,8 +161,8 @@ def targets(*targets):
     )
 
 
-async def flush_server(locator):
-    client = memcachio.Client(locator)
+async def flush_server(endpoint):
+    client = memcachio.Client(endpoint)
     await client.flushall()
 
 

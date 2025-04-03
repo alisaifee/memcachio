@@ -9,7 +9,7 @@ import memcachio
 from memcachio.commands import Command
 from memcachio.errors import ClientError, MemcachioConnectionError
 from memcachio.pool import ClusterPool, Pool, R, SingleServerPool
-from memcachio.types import TCPLocator
+from memcachio.types import TCPEndpoint
 
 
 class TestClient:
@@ -21,19 +21,19 @@ class TestClient:
         ):
             memcachio.Client("fubar", connection_pool=mocker.Mock())
 
-    async def test_construction_with_single_tcp_locator(self, memcached_1):
-        client = memcachio.Client(TCPLocator(*memcached_1))
+    async def test_construction_with_single_tcp_endpoint(self, memcached_1):
+        client = memcachio.Client(TCPEndpoint(*memcached_1))
         assert isinstance(client.connection_pool, SingleServerPool)
 
-    async def test_construction_with_multiple_tcp_locators(self, memcached_1, memcached_2):
-        client = memcachio.Client([TCPLocator(*memcached_1), TCPLocator(*memcached_2)])
+    async def test_construction_with_multiple_tcp_endpoints(self, memcached_1, memcached_2):
+        client = memcachio.Client([TCPEndpoint(*memcached_1), TCPEndpoint(*memcached_2)])
         assert isinstance(client.connection_pool, ClusterPool)
 
     async def test_ssl_context(self, memcached_ssl):
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.VerifyMode.CERT_REQUIRED
-        client = memcachio.Client(TCPLocator(*memcached_ssl), ssl_context=ssl_context)
+        client = memcachio.Client(TCPEndpoint(*memcached_ssl), ssl_context=ssl_context)
         with pytest.raises(MemcachioConnectionError):
             await client.version()
         ssl_context.verify_mode = ssl.VerifyMode.CERT_NONE
