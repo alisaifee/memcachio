@@ -97,6 +97,11 @@ class TestClusterPool:
             await asyncio.gather(
                 *[pool.execute_command(SetCommand(f"key{i}", i, noreply=True)) for i in range(1024)]
             )
+            get_command = GetCommand(*[f"key{i}" for i in range(1024)])
+            await pool.execute_command(get_command)
+            assert set(range(1024)) == set(
+                [int(k.value) for k in (await get_command.response).values()]
+            )
 
     async def test_cluster_pool_keyless_command(self, cluster_endpoint, mocker):
         pool = ClusterPool(cluster_endpoint)
