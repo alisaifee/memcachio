@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 ENCODING = "utf-8"
 
 #: Minimum number of connections to retain in the pool
@@ -23,6 +25,9 @@ MAX_AVERAGE_RESPONSE_TIME_FOR_CONNECTION_REUSE = 0.05
 #: Whether to remove unhealthy endpoints on connection errors.
 #: This is the default value for :attr:`~memcachio.endpointHealthcheckConfig.remove_unhealthy_endpoints`
 REMOVE_UNHEALTHY_ENDPOINTS = False
+#: Maximum numbers of errors to tolerate before marking an endpoint
+#: as unhealthy
+MAXIMUM_ERROR_COUNT_FOR_ENDPOINT_REMOVAL = 2
 #: Whether to monitor unhealthy endpoints after they have been
 #: removed and attempt to restore them if they recover
 #: This is the default value for :attr:`~memcachio.endpointHealthcheckConfig.monitor_unhealthy_endpoints`
@@ -30,3 +35,5 @@ MONITOR_UNHEALTHY_ENDPOINTS = False
 #: Maximum attempts to make to recover unhealthy endpoints
 #: This is the default value for :attr:`~memcachio.endpointHealthcheckConfig.maximum_recovery_attempts`
 MAXIMUM_RECOVERY_ATTEMPTS = 4
+#:
+RETRY_BACKOFF_POLICY: Literal["linear"] = "linear"

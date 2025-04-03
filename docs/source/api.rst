@@ -32,6 +32,9 @@ Connection Pool
 .. autoenum:: memcachio.NodeStatus
    :no-inherited-members:
 
+.. autoclass:: memcachio.PoolMetrics
+   :no-inherited-members:
+
 Connections
 -----------
 .. autoclass:: memcachio.BaseConnection
@@ -41,7 +44,7 @@ Connections
    :class-doc-from: both
 .. autoclass:: memcachio.UnixSocketConnection
    :class-doc-from: both
-.. autoclass:: memcachio.connection.ConnectionMetrics
+.. autoclass:: memcachio.ConnectionMetrics
    :no-inherited-members:
 
 Exception types

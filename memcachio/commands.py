@@ -4,6 +4,7 @@ import abc
 import asyncio
 import copy
 import dataclasses
+import time
 import weakref
 from asyncio import Future
 from collections.abc import Sequence
@@ -92,7 +93,15 @@ class Command(abc.ABC, Generic[R]):
 
     """
 
-    __slots__ = ("__weakref__", "_keys", "noreply", "request_sent", "response")
+    __slots__ = (
+        "__weakref__",
+        "_keys",
+        "noreply",
+        "request_sent",
+        "response",
+        "response_time",
+        "created_at",
+    )
 
     #: The name of the command
     name: ClassVar[Commands]
@@ -102,6 +111,8 @@ class Command(abc.ABC, Generic[R]):
     #: A future that should be set when the request has received a response
     #:  and parsed
     response: Future[R]
+    #:
+    response_time: float
 
     def __init__(self, *keys: KeyT, noreply: bool = False):
         """
@@ -110,9 +121,14 @@ class Command(abc.ABC, Generic[R]):
          to the command.
         """
         self.noreply = noreply
+        self.created_at = time.time()
+        self.response_time = 0
         self._keys: list[str] = [decodedstr(key) for key in keys or []]
         self.request_sent = asyncio.get_running_loop().create_future()
         self.response = asyncio.get_running_loop().create_future()
+        (self.request_sent if self.noreply else self.response).add_done_callback(
+            lambda _: self._update_response_time()
+        )
 
     def merge(self, responses: list[R]) -> R:
         return responses[0]
@@ -138,6 +154,9 @@ class Command(abc.ABC, Generic[R]):
         subset._keys = list(decodedstr(key) for key in keys)
         subset.request_sent = asyncio.get_running_loop().create_future()
         subset.response = asyncio.get_running_loop().create_future()
+        (subset.request_sent if subset.noreply else subset.response).add_done_callback(
+            lambda _: subset._update_response_time()
+        )
         return subset
 
     @abc.abstractmethod
@@ -156,6 +175,9 @@ class Command(abc.ABC, Generic[R]):
         for this command.
         """
         ...
+
+    def _update_response_time(self) -> None:
+        self.response_time = time.time() - self.created_at
 
 
 class BasicResponseCommand(Command[bool]):

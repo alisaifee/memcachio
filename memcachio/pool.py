@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import suppress
-from typing import Any, TypeVar, Unpack, cast
+from typing import Any, Literal, TypeVar, Unpack, cast
 
 from .commands import Command
 from .connection import (
@@ -23,10 +23,12 @@ from .defaults import (
     BLOCKING_TIMEOUT,
     IDLE_CONNECTION_TIMEOUT,
     MAX_CONNECTIONS,
+    MAXIMUM_ERROR_COUNT_FOR_ENDPOINT_REMOVAL,
     MAXIMUM_RECOVERY_ATTEMPTS,
     MIN_CONNECTIONS,
     MONITOR_UNHEALTHY_ENDPOINTS,
     REMOVE_UNHEALTHY_ENDPOINTS,
+    RETRY_BACKOFF_POLICY,
 )
 from .errors import ConnectionNotAvailable, MemcachioConnectionError
 from .routing import KeyRouter
@@ -59,11 +61,119 @@ class EndpointStatus(enum.IntEnum):
 class EndpointHealthcheckConfig:
     #: Whether to remove unhealthy endpoints on connection errors
     remove_unhealthy_endpoints: bool = REMOVE_UNHEALTHY_ENDPOINTS
+    #: Maximum numbers of errors to tolerate before marking an endpoint
+    #: as unhealthy
+    maximum_error_count_for_removal: int = MAXIMUM_ERROR_COUNT_FOR_ENDPOINT_REMOVAL
     #: Whether to monitor unhealthy endpoints after they have been
     #: removed and attempt to restore them if they recover
     monitor_unhealthy_endpoints: bool = MONITOR_UNHEALTHY_ENDPOINTS
     #: Maximum attempts to make to recover unhealthy endpoints
     maximum_recovery_attempts: int = MAXIMUM_RECOVERY_ATTEMPTS
+    #: Retry backoff policy
+    retry_backoff_policy: Literal["linear", "exponential"] = RETRY_BACKOFF_POLICY
+
+
+@dataclasses.dataclass
+class PoolMetrics:
+    """
+    Tracks metrics for a connection pool.
+    """
+
+    #: Timestamp when the pool was initialized.
+    created_at: float | None = None
+    #: Total number of successfully processed requests.
+    requests_processed: int = 0
+    #: Total number of requests that failed.
+    requests_failed: int = 0
+    #: Timestamp when the last connection was established
+    last_connection_created: float = 0.0
+    #: Timestamp when the last request completed processing.
+    last_request_processed: float = 0.0
+    #: Average time taken to process requests.
+    average_response_time: float = 0.0
+    #: Number of requests currently pending.
+    requests_pending: int = 0
+    #: Current connections
+    current_connections: int = 0
+    #: Maximum connections created
+    maximum_connections: int = 0
+    #: Total number of connection errors
+    connection_errors: int = 0
+    #: Current endpoint status
+    status: EndpointStatus | None = None
+    #: Number of times the pool was marked down
+    down_count: int = 0
+    #: Number of times the node was switched from down to up
+    recovery_count: int = 0
+
+    def on_connection_created(self, connection: BaseConnection) -> None:
+        self.last_connection_created = time.time()
+        self.current_connections += 1
+        self.maximum_connections = max(self.maximum_connections, self.current_connections)
+
+    def on_connection_error(self, connection: BaseConnection | None, exc: Exception) -> None:
+        self.connection_errors += 1
+
+    def on_connection_terminated(self, connection: BaseConnection) -> None:
+        self.current_connections -= 1
+
+    def on_command_dispatched(self, command: Command[Any]) -> None:
+        self.requests_pending += 1
+        pass
+
+    def on_status_update(self, status: EndpointStatus) -> None:
+        if self.status != status:
+            match status:
+                case EndpointStatus.DOWN:
+                    self.down_count += 1
+                case EndpointStatus.UP:
+                    self.recovery_count += 1
+        self.status = status
+
+    def on_command_completed(self, command: Command[Any]) -> None:
+        self.requests_pending -= 1
+        self.last_request_processed = time.time()
+        if not command.noreply:
+            if command.response.done() and not command.response.cancelled():
+                if not command.response.exception():
+                    self.average_response_time = (
+                        (self.requests_processed * self.average_response_time)
+                        + command.response_time
+                    ) / (self.requests_processed + 1)
+                    self.requests_processed += 1
+                else:
+                    self.requests_failed += 1
+        elif command.request_sent.done():
+            self.requests_processed += 1
+
+    @classmethod
+    def merge(cls, metrics: Iterable[PoolMetrics]) -> PoolMetrics:
+        if not metrics:
+            return PoolMetrics()
+        return PoolMetrics(
+            created_at=min(metrics, key=lambda m: m.created_at or 0).created_at,
+            requests_processed=sum([m.requests_processed for m in metrics]),
+            requests_failed=sum([m.requests_failed for m in metrics]),
+            requests_pending=sum([m.requests_pending for m in metrics]),
+            last_connection_created=max(
+                metrics, key=lambda m: m.last_connection_created
+            ).last_connection_created,
+            last_request_processed=max(
+                metrics, key=lambda m: m.last_request_processed
+            ).last_request_processed,
+            average_response_time=sum(
+                [m.requests_processed * m.average_response_time for m in metrics]
+            )
+            / (sum([m.requests_processed for m in metrics]) or 1),
+            current_connections=sum([m.current_connections for m in metrics]),
+            maximum_connections=sum([m.maximum_connections for m in metrics]),
+            connection_errors=sum([m.connection_errors for m in metrics]),
+            recovery_count=sum([m.recovery_count for m in metrics]),
+            down_count=sum([m.down_count for m in metrics]),
+            status=EndpointStatus.UP
+            if all([m.status == EndpointStatus.UP for m in metrics])
+            else EndpointStatus.DOWN,
+        )
 
 
 class Pool(ABC):
@@ -122,6 +232,14 @@ class Pool(ABC):
         """
         ...
 
+    @property
+    @abstractmethod
+    def metrics(self) -> PoolMetrics:
+        """
+        Pool health metrics
+        """
+        ...
+
     def __del__(self) -> None:
         with suppress(RuntimeError):
             self.close()
@@ -164,6 +282,8 @@ class SingleServerPool(Pool):
             self.__on_connection_disconnected
         )
         self._active_connections: weakref.WeakSet[BaseConnection] = weakref.WeakSet()
+        self._metrics = PoolMetrics()
+
         while True:
             try:
                 self._connections.put_nowait(None)
@@ -176,12 +296,15 @@ class SingleServerPool(Pool):
         async with self._pool_lock:
             if self._initialized:
                 return
+            if not self.metrics.created_at:
+                self.metrics.created_at = time.time()
             for _ in range(self._min_connections):
                 connection = self._connections.get_nowait()
                 try:
                     if not connection:
                         self._connections.put_nowait(await self._create_connection())
-                except ConnectionError:
+                except ConnectionError as e:
+                    self.metrics.on_connection_error(connection, e)
                     self._connections.put_nowait(None)
                     raise
             self._initialized = True
@@ -192,7 +315,11 @@ class SingleServerPool(Pool):
             connection, release = await self.acquire(command)
             await connection.connect()
             connection.create_request(command)
+            self.metrics.on_command_dispatched(command)
             await command.request_sent
+            (command.request_sent if command.noreply else command.response).add_done_callback(
+                lambda _: self.metrics.on_command_completed(command)
+            )
             if release:
                 if command.noreply:
                     self._connections.put_nowait(connection)
@@ -200,10 +327,15 @@ class SingleServerPool(Pool):
                     command.response.add_done_callback(
                         lambda _: self._connections.put_nowait(connection)
                     )
-        except MemcachioConnectionError:
+        except MemcachioConnectionError as e:
+            self.metrics.on_connection_error(connection, e)
             if release:
                 self._connections.put_nowait(None)
             raise
+
+    @property
+    def metrics(self) -> PoolMetrics:
+        return self._metrics
 
     async def acquire(self, command: Command[Any]) -> tuple[BaseConnection, bool]:
         await self.initialize()
@@ -218,7 +350,8 @@ class SingleServerPool(Pool):
                     else:
                         if not connection:
                             connection = await self._create_connection()
-                except ConnectionError:
+                except ConnectionError as e:
+                    self.metrics.on_connection_error(connection, e)
                     self._connections.put_nowait(None)
                     raise
             return connection, not released
@@ -264,12 +397,14 @@ class SingleServerPool(Pool):
 
     def __on_connection_created(self, connection: BaseConnection) -> None:
         self._active_connections.add(connection)
+        self.metrics.on_connection_created(connection)
         if self._idle_connection_timeout:
             asyncio.get_running_loop().call_later(
                 self._idle_connection_timeout, self.__check_connection_idle, connection
             )
 
     def __on_connection_disconnected(self, connection: BaseConnection) -> None:
+        self.metrics.on_connection_terminated(connection)
         self._active_connections.discard(connection)
 
 
@@ -325,9 +460,7 @@ class ClusterPool(Pool):
         }
         self._unhealthy_endpoints: set[SingleMemcachedInstanceEndpoint] = set()
         self._router = KeyRouter(self._all_endpoints, hasher=hashing_function)
-        self._health_check_locks: dict[SingleMemcachedInstanceEndpoint, asyncio.Lock] = defaultdict(
-            asyncio.Lock
-        )
+        self._health_check_tasks: dict[SingleMemcachedInstanceEndpoint, asyncio.Task[None]] = {}
         self.__endpoint_healthcheck_config: EndpointHealthcheckConfig = (
             endpoint_healthcheck_config or EndpointHealthcheckConfig()
         )
@@ -335,6 +468,20 @@ class ClusterPool(Pool):
     @property
     def endpoints(self) -> set[SingleMemcachedInstanceEndpoint]:
         return self._all_endpoints - self._unhealthy_endpoints
+
+    @property
+    def metrics(self) -> PoolMetrics:
+        """
+        Aggregate metrics obtained from the sub-pools for each
+        endpoint that this cluster pool is configured against.
+        """
+        return PoolMetrics.merge(
+            [
+                self._cluster_pools[endpoint].metrics
+                for endpoint in self._all_endpoints
+                if endpoint in self._cluster_pools
+            ]
+        )
 
     def add_endpoint(self, endpoint: SingleMemcachedInstanceEndpoint) -> None:
         """
@@ -381,6 +528,7 @@ class ClusterPool(Pool):
             case EndpointStatus.DOWN:
                 self._unhealthy_endpoints.add(normalized_endpoint)
                 self._router.remove_node(normalized_endpoint)
+        self._cluster_pools[normalized_endpoint].metrics.on_status_update(status)
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -436,62 +584,72 @@ class ClusterPool(Pool):
                     )
         except MemcachioConnectionError as e:
             if self.__endpoint_healthcheck_config.remove_unhealthy_endpoints:
-                asyncio.get_running_loop().call_soon(
-                    asyncio.create_task, self.__check_endpoint_health(e.endpoint)
-                )
+                if (
+                    not (current_task := self._health_check_tasks.get(e.endpoint, None))
+                    or current_task.done()
+                ):
+                    self._health_check_tasks[e.endpoint] = asyncio.create_task(
+                        self.__check_endpoint_health(e.endpoint)
+                    )
             raise
 
-    async def __check_endpoint_health(
-        self, endpoint: SingleMemcachedInstanceEndpoint, attempt: int = 0
-    ) -> None:
-        if (
-            self._health_check_locks[endpoint].locked()
-            or endpoint not in self._cluster_pools
-            or attempt > self.__endpoint_healthcheck_config.maximum_recovery_attempts
-        ):
-            return
-
-        async with self._health_check_locks[endpoint]:
+    async def __check_endpoint_health(self, endpoint: SingleMemcachedInstanceEndpoint) -> None:
+        attempt = 0
+        while True:
             try:
-                if pool := self._cluster_pools.get(endpoint, None):
-                    await pool.initialize()
-                    if any(pool._active_connections):
-                        if self.__endpoint_healthcheck_config.monitor_unhealthy_endpoints:
-                            logger.info(
-                                f"Memcached server at {endpoint} has recovered after {2**attempt} seconds"
-                            )
-                            self.mark_endpoint(endpoint, EndpointStatus.UP)
-                        return
-                    else:
-                        pool.close()
-            except MemcachioConnectionError:
-                self.mark_endpoint(endpoint, EndpointStatus.DOWN)
-                if (
-                    not self.__endpoint_healthcheck_config.monitor_unhealthy_endpoints
-                    or attempt == self.__endpoint_healthcheck_config.maximum_recovery_attempts
-                ):
-                    logger.error(f"Memcached server at {endpoint} unreachable and marked down")
-                    return
-            except Exception:
-                logger.exception("Unknown error while checking endpoint health")
-                return
+                try:
+                    if pool := self._cluster_pools.get(endpoint, None):
+                        if (
+                            pool.metrics.connection_errors
+                            < self.__endpoint_healthcheck_config.maximum_error_count_for_removal
+                        ):
+                            return
+                        await pool.initialize()
+                        if pool.metrics.current_connections > 0:
+                            if self.__endpoint_healthcheck_config.monitor_unhealthy_endpoints:
+                                logger.info(
+                                    f"Memcached server at {endpoint} has recovered after {2**attempt} seconds"
+                                )
+                                self.mark_endpoint(endpoint, EndpointStatus.UP)
+                            break
+                        else:
+                            pool.close()
+                except MemcachioConnectionError:
+                    self.mark_endpoint(endpoint, EndpointStatus.DOWN)
+                    if (
+                        not self.__endpoint_healthcheck_config.monitor_unhealthy_endpoints
+                        or attempt == self.__endpoint_healthcheck_config.maximum_recovery_attempts
+                    ):
+                        logger.error(f"Memcached server at {endpoint} unreachable and marked down")
+                        break
+                except Exception:
+                    logger.exception("Unknown error while checking endpoint health")
+                    break
 
-        if (
-            endpoint in self._unhealthy_endpoints
-            and self.__endpoint_healthcheck_config.monitor_unhealthy_endpoints
-            and attempt < self.__endpoint_healthcheck_config.maximum_recovery_attempts
-        ):
-            delay = 2**attempt
-            logger.debug(
-                f"Memcached server at {endpoint} still down, attempting recovery attempt in {delay} seconds"
-            )
-            asyncio.get_running_loop().call_later(
-                delay, asyncio.create_task, self.__check_endpoint_health(endpoint, attempt + 1)
-            )
+                if (
+                    endpoint in self._unhealthy_endpoints
+                    and self.__endpoint_healthcheck_config.monitor_unhealthy_endpoints
+                    and attempt < self.__endpoint_healthcheck_config.maximum_recovery_attempts
+                ):
+                    match self.__endpoint_healthcheck_config.retry_backoff_policy:
+                        case "linear":
+                            delay = attempt
+                        case "exponential":
+                            delay = 2**attempt
+                    logger.debug(
+                        f"Memcached server at {endpoint} still down, attempting recovery attempt in {delay} seconds"
+                    )
+                    attempt += 1
+                    await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                break
 
     def close(self) -> None:
         for pool in self._cluster_pools.values():
             pool.close()
+        for task in self._health_check_tasks.values():
+            task.cancel()
+        self._health_check_tasks.clear()
         self._unhealthy_endpoints.clear()
         self._cluster_pools.clear()
         self._initialized = False

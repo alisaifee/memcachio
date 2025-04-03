@@ -8,7 +8,7 @@ import pytest
 import memcachio
 from memcachio.commands import Command
 from memcachio.errors import ClientError, MemcachioConnectionError
-from memcachio.pool import ClusterPool, Pool, R, SingleServerPool
+from memcachio.pool import ClusterPool, Pool, PoolMetrics, R, SingleServerPool
 from memcachio.types import TCPEndpoint
 
 
@@ -46,6 +46,10 @@ class TestClient:
 
             def close(self) -> None:
                 pass
+
+            @property
+            def metrics(self) -> PoolMetrics:
+                return PoolMetrics()
 
             async def execute_command(self, command: Command[R]) -> None:
                 command.response.set_result(True)

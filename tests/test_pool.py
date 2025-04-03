@@ -166,18 +166,22 @@ class TestClusterPool:
     async def test_auto_removal_unhealthy_endpoint(self, cluster_endpoint, mocker):
         pool = ClusterPool(
             cluster_endpoint,
-            endpoint_healthcheck_config=EndpointHealthcheckConfig(remove_unhealthy_endpoints=True),
+            endpoint_healthcheck_config=EndpointHealthcheckConfig(
+                remove_unhealthy_endpoints=True, maximum_error_count_for_removal=1
+            ),
         )
         with closing(pool):
             await pool.initialize()
             target_endpoint = pool._router.get_node("key")
 
             async def raise_error(*args):
+                exc = MemcachioConnectionError(endpoint=target_endpoint, message="something bad")
                 if instance_pool := pool._cluster_pools.get(target_endpoint, None):
                     for connection in instance_pool._active_connections:
                         connection.close()
                     instance_pool.close()
-                raise MemcachioConnectionError(endpoint=target_endpoint, message="something bad")
+                    instance_pool.metrics.on_connection_error(None, exc)
+                raise exc
 
             with closing(pool):
                 get = GetCommand("key")
@@ -205,7 +209,9 @@ class TestClusterPool:
         pool = ClusterPool(
             cluster_endpoint,
             endpoint_healthcheck_config=EndpointHealthcheckConfig(
-                remove_unhealthy_endpoints=True, monitor_unhealthy_endpoints=True
+                remove_unhealthy_endpoints=True,
+                monitor_unhealthy_endpoints=True,
+                maximum_error_count_for_removal=1,
             ),
         )
         with closing(pool):
@@ -213,10 +219,12 @@ class TestClusterPool:
             target_endpoint = pool._router.get_node("key")
 
             async def raise_error(*args, **kwargs):
-                if instance_pool := pool._cluster_pools.get(target_endpoint, None):
-                    for connection in instance_pool._active_connections:
-                        connection.close()
-                raise MemcachioConnectionError(endpoint=target_endpoint, message="something bad")
+                exc = MemcachioConnectionError(endpoint=target_endpoint, message="something bad")
+                instance_pool = pool._cluster_pools.get(target_endpoint, None)
+                for connection in instance_pool._active_connections:
+                    connection.close()
+                instance_pool.metrics.on_connection_error(None, exc)
+                raise exc
 
             with closing(pool):
                 get = GetCommand("key")
@@ -241,15 +249,63 @@ class TestClusterPool:
                     await pool.execute_command(get)
 
                 await asyncio.sleep(0.01)
-
                 assert target_endpoint not in pool.endpoints
 
                 mocker.stopall()
 
                 await asyncio.sleep(5)
-
                 assert target_endpoint in pool.endpoints
 
                 get = GetCommand("key")
                 await pool.execute_command(get)
                 assert {} == await get.response
+
+    async def test_auto_recovery_fail(self, cluster_endpoint, mocker):
+        pool = ClusterPool(
+            cluster_endpoint,
+            endpoint_healthcheck_config=EndpointHealthcheckConfig(
+                remove_unhealthy_endpoints=True,
+                monitor_unhealthy_endpoints=True,
+                maximum_recovery_attempts=2,
+                maximum_error_count_for_removal=1,
+            ),
+        )
+        with closing(pool):
+            await pool.initialize()
+            target_endpoint = pool._router.get_node("key")
+
+            async def raise_error(*args, **kwargs):
+                exc = MemcachioConnectionError(endpoint=target_endpoint, message="something bad")
+                instance_pool = pool._cluster_pools.get(target_endpoint, None)
+                for connection in instance_pool._active_connections:
+                    connection.close()
+                instance_pool.metrics.on_connection_error(None, exc)
+                raise exc
+
+            with closing(pool):
+                get = GetCommand("key")
+
+                mocker.patch.object(
+                    pool._cluster_pools[target_endpoint],
+                    "execute_command",
+                    side_effect=raise_error,
+                    autospec=True,
+                )
+                mocker.patch.object(
+                    pool._cluster_pools[target_endpoint],
+                    "initialize",
+                    side_effect=raise_error,
+                    autospec=True,
+                )
+
+                with pytest.raises(
+                    MemcachioConnectionError,
+                    match=re.escape(f"something bad (memcached server: {target_endpoint})"),
+                ):
+                    await pool.execute_command(get)
+
+                await asyncio.sleep(0.01)
+                assert target_endpoint not in pool.endpoints
+                await asyncio.sleep(2)
+                assert target_endpoint not in pool.endpoints
+            assert not pool._health_check_tasks
