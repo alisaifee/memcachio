@@ -158,7 +158,7 @@ class TestClusterPool:
             get = GetCommand("key")
             with pytest.raises(MemcachioConnectionError, match=f"memcached server: {bad_endpoint}"):
                 await pool.execute_command(get)
-            pool.mark_endpoint(bad_endpoint, EndpointStatus.DOWN)
+            pool.update_endpoint_status(bad_endpoint, EndpointStatus.DOWN)
             get = GetCommand("key")
             await pool.execute_command(get)
             assert {} == await get.response

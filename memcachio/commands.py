@@ -133,18 +133,6 @@ class Command(abc.ABC, Generic[R]):
     def merge(self, responses: list[R]) -> R:
         return responses[0]
 
-    def _check_header(self, header: bytes) -> None:
-        if not header.endswith(LINE_END):
-            raise NotEnoughData(len(header))
-        response = header.rstrip()
-        if response.startswith(Responses.CLIENT_ERROR):
-            raise ClientError(decodedstr(response.split(Responses.CLIENT_ERROR)[1]).strip())
-        elif response.startswith(Responses.SERVER_ERROR):
-            raise ServerError(decodedstr(response.split(Responses.SERVER_ERROR)[1]).strip())
-        elif response.startswith(Responses.ERROR):
-            raise MemcachedError(decodedstr(response).strip())
-        return None
-
     @property
     def keys(self) -> list[str]:
         return self._keys
@@ -178,6 +166,18 @@ class Command(abc.ABC, Generic[R]):
 
     def _update_response_time(self) -> None:
         self.response_time = time.time() - self.created_at
+
+    def _check_header(self, header: bytes) -> None:
+        if not header.endswith(LINE_END):
+            raise NotEnoughData(len(header))
+        response = header.rstrip()
+        if response.startswith(Responses.CLIENT_ERROR):
+            raise ClientError(decodedstr(response.split(Responses.CLIENT_ERROR)[1]).strip())
+        elif response.startswith(Responses.SERVER_ERROR):
+            raise ServerError(decodedstr(response.split(Responses.SERVER_ERROR)[1]).strip())
+        elif response.startswith(Responses.ERROR):
+            raise MemcachedError(decodedstr(response).strip())
+        return None
 
 
 class BasicResponseCommand(Command[bool]):
