@@ -7,13 +7,14 @@ import dataclasses
 import time
 import weakref
 from asyncio import Future
+from collections import ChainMap
 from collections.abc import Sequence
 from io import BytesIO
 from typing import AnyStr, ClassVar, Generic, Self, TypeVar, cast
 
 from .constants import LINE_END, Commands, Responses
 from .errors import ClientError, MemcachedError, NotEnoughData, ServerError
-from .types import KeyT, MemcachedItem, ValueT
+from .types import KeyT, MemcachedItem, SingleMemcachedInstanceEndpoint, ValueT
 from .utils import bytestr, decodedstr
 
 R = TypeVar("R")
@@ -76,7 +77,7 @@ class Command(abc.ABC, Generic[R]):
                     [self.value + b"\\r\\n"],
                 )
 
-            def parse(self, data: BytesIO) -> bool:
+            def parse(self, data: BytesIO, endpoint: SingleMemcachedInstanceEndpoint) -> bool:
                 response = data.readline()
                 return response.rstrip() == b"STORED"
 
@@ -156,7 +157,7 @@ class Command(abc.ABC, Generic[R]):
         ...
 
     @abc.abstractmethod
-    def parse(self, data: BytesIO) -> R:
+    def parse(self, data: BytesIO, endpoint: SingleMemcachedInstanceEndpoint) -> R:
         """
         Parse the response from the buffer assuming the
         current position of the buffer contains the response
@@ -183,7 +184,7 @@ class Command(abc.ABC, Generic[R]):
 class BasicResponseCommand(Command[bool]):
     success: ClassVar[Responses]
 
-    def parse(self, data: BytesIO) -> bool:
+    def parse(self, data: BytesIO, endpoint: SingleMemcachedInstanceEndpoint) -> bool:
         response = data.readline()
         self._check_header(response)
         if not response.rstrip() == self.success.value:
@@ -204,7 +205,9 @@ class GetCommand(Command[dict[AnyStr, MemcachedItem[AnyStr]]]):
     def build_request(self) -> Request[R]:
         return Request(weakref.proxy(self), f"{' '.join(self.keys)}".encode())
 
-    def parse(self, data: BytesIO) -> dict[AnyStr, MemcachedItem[AnyStr]]:
+    def parse(
+        self, data: BytesIO, endpoint: SingleMemcachedInstanceEndpoint
+    ) -> dict[AnyStr, MemcachedItem[AnyStr]]:
         while True:
             header = data.readline()
             self._check_header(header)
@@ -338,7 +341,7 @@ class ArithmenticCommand(Command[int | None]):
         request = f"{decodedstr(self.keys[0])} {self.amount}"
         return Request(weakref.proxy(self), request.encode())
 
-    def parse(self, data: BytesIO) -> int | None:
+    def parse(self, data: BytesIO, endpoint: SingleMemcachedInstanceEndpoint) -> int | None:
         response = data.readline()
         self._check_header(response)
         response = response.rstrip()
@@ -392,19 +395,26 @@ class FlushAllCommand(BasicResponseCommand):
         return all(results)
 
 
-class VersionCommand(Command[str]):
+class VersionCommand(Command[dict[SingleMemcachedInstanceEndpoint, str]]):
     name = Commands.VERSION
 
     def build_request(self) -> Request[R]:
         return Request(weakref.proxy(self), b"")
 
-    def parse(self, data: BytesIO) -> str:
+    def parse(
+        self, data: BytesIO, endpoint: SingleMemcachedInstanceEndpoint
+    ) -> dict[SingleMemcachedInstanceEndpoint, str]:
         response = data.readline()
         self._check_header(response)
-        return response.partition(Responses.VERSION)[-1].strip().decode("utf-8")
+        return {endpoint: response.partition(Responses.VERSION)[-1].strip().decode("utf-8")}
+
+    def merge(
+        self, responses: list[dict[SingleMemcachedInstanceEndpoint, str]]
+    ) -> dict[SingleMemcachedInstanceEndpoint, str]:
+        return dict(ChainMap(*responses))
 
 
-class StatsCommand(Command[dict[AnyStr, AnyStr]]):
+class StatsCommand(Command[dict[SingleMemcachedInstanceEndpoint, dict[AnyStr, AnyStr]]]):
     name = Commands.STATS
 
     def __init__(
@@ -418,7 +428,9 @@ class StatsCommand(Command[dict[AnyStr, AnyStr]]):
     def build_request(self) -> Request[R]:
         return Request(weakref.proxy(self), b"" if not self.arg else bytestr(self.arg))
 
-    def parse(self, data: BytesIO) -> dict[AnyStr, AnyStr]:
+    def parse(
+        self, data: BytesIO, endpoint: SingleMemcachedInstanceEndpoint
+    ) -> dict[SingleMemcachedInstanceEndpoint, dict[AnyStr, AnyStr]]:
         stats = {}
         while True:
             section = data.readline()
@@ -429,4 +441,9 @@ class StatsCommand(Command[dict[AnyStr, AnyStr]]):
                 part = section.lstrip(Responses.STAT).strip()
                 item, value = (decodedstr(part) if self.decode_responses else part).split()
                 stats[cast(AnyStr, item)] = cast(AnyStr, value)
-        return stats
+        return {endpoint: stats}
+
+    def merge(
+        self, responses: list[dict[SingleMemcachedInstanceEndpoint, dict[AnyStr, AnyStr]]]
+    ) -> dict[SingleMemcachedInstanceEndpoint, dict[AnyStr, AnyStr]]:
+        return dict(ChainMap(*responses))

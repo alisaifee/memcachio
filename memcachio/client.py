@@ -45,7 +45,14 @@ from memcachio.defaults import (
     READ_TIMEOUT,
 )
 from memcachio.pool import ClusterPool, EndpointHealthcheckConfig, Pool, SingleServerPool
-from memcachio.types import KeyT, MemcachedEndpoint, MemcachedItem, ValueT, is_single_server
+from memcachio.types import (
+    KeyT,
+    MemcachedEndpoint,
+    MemcachedItem,
+    SingleMemcachedInstanceEndpoint,
+    ValueT,
+    is_single_server,
+)
 
 R = TypeVar("R")
 P = ParamSpec("P")
@@ -587,17 +594,23 @@ class Client(Generic[AnyStr]):
 
         :param expiry: Delay (in seconds) before flushing all items (default: 0).
         :return: True if the flush operation succeeded, False otherwise.
+
+        .. note:: If the client is configured to use multiple memcached servers
+           the result will be True only if all servers succeeded.
         """
         command = FlushAllCommand(expiry=expiry)
         await self.execute_command(command)
         return await command.response
 
-    async def stats(self, arg: str | None = None) -> dict[AnyStr, AnyStr]:
+    async def stats(
+        self, arg: str | None = None
+    ) -> dict[SingleMemcachedInstanceEndpoint, dict[AnyStr, AnyStr]]:
         """
         Retrieve server statistics from memcached.
 
         :param arg: An optional argument to specify a subset of statistics.
-        :return: A dictionary of statistic keys and their corresponding values.
+        :return: A mapping of memcached servers to mappings of statistic keys
+         and their corresponding values.
         """
         command = StatsCommand[AnyStr](
             arg, decode_responses=self.decode_responses, encoding=self.encoding
@@ -605,11 +618,11 @@ class Client(Generic[AnyStr]):
         await self.execute_command(command)
         return await command.response
 
-    async def version(self) -> str:
+    async def version(self) -> dict[SingleMemcachedInstanceEndpoint, str]:
         """
         Retrieve the memcached server version.
 
-        :return: A string representing the version of the memcached server.
+        :return: A mapping of memcached servers to their versions
         """
         command = VersionCommand(noreply=False)
         await self.execute_command(command)

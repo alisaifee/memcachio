@@ -173,12 +173,17 @@ class TestCommands:
             await client.decr("other-key", 1)
 
     async def test_stats(self, client: memcachio.Client):
-        assert b"bytes_read" in await client.stats()
-        assert b"active_slabs" in await client.stats("slabs")
+        stats = await client.stats()
+        for instance, stats in stats.items():
+            assert b"bytes_read" in stats
+        slab_stats = await client.stats("slabs")
+        for instance, stats in slab_stats.items():
+            assert b"active_slabs" in stats
 
     async def test_version(self, client: memcachio.Client):
-        version = await client.version()
-        assert re.match(r"\d+.\d+.\d+", version)
+        versions = await client.version()
+        for instance, version in versions.items():
+            assert re.match(r"\d+.\d+.\d+", version)
 
     async def test_all_noreply(self, client: memcachio.Client):
         assert None is await client.set("fubar", 1, noreply=True)

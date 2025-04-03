@@ -286,7 +286,7 @@ class BaseConnection(BaseProtocol, ABC):
         while self._request_queue:
             request = self._request_queue.popleft()
             try:
-                response = request.command.parse(self._buffer)
+                response = request.command.parse(self._buffer, self.endpoint)
                 if not (request.command.response.cancelled() or request.command.response.done()):
                     request.command.response.set_result(response)
             except NotEnoughData as e:

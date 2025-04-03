@@ -11,6 +11,7 @@ import memcachio
 from memcachio import TCPConnection, UnixSocketConnection
 from memcachio.commands import Command, FlushAllCommand, GetCommand, R, Request, SetCommand
 from memcachio.errors import ClientError, MemcachioConnectionError, ServerError
+from memcachio.types import SingleMemcachedInstanceEndpoint
 from tests.conftest import flush_server
 
 
@@ -118,7 +119,7 @@ class TestConnectionErrors:
                 def build_request(self) -> Request[R]:
                     return Request(self, b"key 0 0 2", [b"123\r\n"])
 
-                def parse(self, data: BytesIO) -> R:
+                def parse(self, data: BytesIO, endpoint: SingleMemcachedInstanceEndpoint) -> R:
                     header = data.readline()
                     self._check_header(header)
                     return False
