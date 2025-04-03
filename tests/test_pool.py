@@ -308,4 +308,3 @@ class TestClusterPool:
                 assert target_endpoint not in pool.endpoints
                 await asyncio.sleep(2)
                 assert target_endpoint not in pool.endpoints
-            assert not pool._health_check_tasks

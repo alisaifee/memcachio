@@ -110,9 +110,13 @@ class PoolMetrics:
         self.last_connection_created = time.time()
         self.current_connections += 1
         self.maximum_connections = max(self.maximum_connections, self.current_connections)
+        if not self.status:
+            self.status = EndpointStatus.UP
 
     def on_connection_error(self, connection: BaseConnection | None, exc: Exception) -> None:
         self.connection_errors += 1
+        if not self.status:
+            self.status = EndpointStatus.UP
 
     def on_connection_terminated(self, connection: BaseConnection) -> None:
         self.current_connections -= 1
@@ -268,13 +272,13 @@ class SingleServerPool(Pool):
             idle_connection_timeout=idle_connection_timeout,
             **connection_args,
         )
-        self._server_endpoint = endpoint
-        self._connections: asyncio.Queue[BaseConnection | None] = asyncio.LifoQueue(
+        self.__server_endpoint = endpoint
+        self.__connections: asyncio.Queue[BaseConnection | None] = asyncio.LifoQueue(
             self._max_connections
         )
-        self._pool_lock: asyncio.Lock = asyncio.Lock()
+        self.__pool_lock: asyncio.Lock = asyncio.Lock()
         self._connection_class: type[TCPConnection | UnixSocketConnection]
-        self._initialized = False
+        self.__initialized = False
         self._connection_parameters.setdefault("on_connect_callbacks", []).append(
             self.__on_connection_created
         )
@@ -282,32 +286,32 @@ class SingleServerPool(Pool):
             self.__on_connection_disconnected
         )
         self._active_connections: weakref.WeakSet[BaseConnection] = weakref.WeakSet()
-        self._metrics = PoolMetrics()
+        self.__metrics = PoolMetrics()
 
         while True:
             try:
-                self._connections.put_nowait(None)
+                self.__connections.put_nowait(None)
             except asyncio.QueueFull:
                 break
 
     async def initialize(self) -> None:
-        if self._initialized:
+        if self.__initialized:
             return
-        async with self._pool_lock:
-            if self._initialized:
+        async with self.__pool_lock:
+            if self.__initialized:
                 return
             if not self.metrics.created_at:
                 self.metrics.created_at = time.time()
             for _ in range(self._min_connections):
-                connection = self._connections.get_nowait()
+                connection = self.__connections.get_nowait()
                 try:
                     if not connection:
-                        self._connections.put_nowait(await self._create_connection())
+                        self.__connections.put_nowait(await self._create_connection())
                 except ConnectionError as e:
                     self.metrics.on_connection_error(connection, e)
-                    self._connections.put_nowait(None)
+                    self.__connections.put_nowait(None)
                     raise
-            self._initialized = True
+            self.__initialized = True
 
     async def execute_command(self, command: Command[R]) -> None:
         connection, release = None, None
@@ -322,62 +326,62 @@ class SingleServerPool(Pool):
             )
             if release:
                 if command.noreply:
-                    self._connections.put_nowait(connection)
+                    self.__connections.put_nowait(connection)
                 else:
                     command.response.add_done_callback(
-                        lambda _: self._connections.put_nowait(connection)
+                        lambda _: self.__connections.put_nowait(connection)
                     )
         except MemcachioConnectionError as e:
             self.metrics.on_connection_error(connection, e)
             if release:
-                self._connections.put_nowait(None)
+                self.__connections.put_nowait(None)
             raise
 
     @property
     def metrics(self) -> PoolMetrics:
-        return self._metrics
+        return self.__metrics
 
     async def acquire(self, command: Command[Any]) -> tuple[BaseConnection, bool]:
         await self.initialize()
         released = False
         try:
             async with asyncio.timeout(self._blocking_timeout):
-                connection = await self._connections.get()
+                connection = await self.__connections.get()
                 try:
                     if connection and connection.reusable:
-                        self._connections.put_nowait(connection)
+                        self.__connections.put_nowait(connection)
                         released = True
                     else:
                         if not connection:
                             connection = await self._create_connection()
                 except ConnectionError as e:
                     self.metrics.on_connection_error(connection, e)
-                    self._connections.put_nowait(None)
+                    self.__connections.put_nowait(None)
                     raise
             return connection, not released
         except TimeoutError:
-            raise ConnectionNotAvailable(self._server_endpoint, self._blocking_timeout)
+            raise ConnectionNotAvailable(self.__server_endpoint, self._blocking_timeout)
 
     def close(self) -> None:
         while True:
             try:
-                if connection := self._connections.get_nowait():
+                if connection := self.__connections.get_nowait():
                     connection.close()
             except asyncio.QueueEmpty:
                 break
         while True:
             try:
-                self._connections.put_nowait(None)
+                self.__connections.put_nowait(None)
             except asyncio.QueueFull:
                 break
-        self._initialized = False
+        self.__initialized = False
 
     async def _create_connection(self) -> BaseConnection:
         connection: BaseConnection
-        if isinstance(self._server_endpoint, UnixSocketEndpoint):
-            connection = UnixSocketConnection(self._server_endpoint, **self._connection_parameters)
+        if isinstance(self.__server_endpoint, UnixSocketEndpoint):
+            connection = UnixSocketConnection(self.__server_endpoint, **self._connection_parameters)
         else:
-            connection = TCPConnection(self._server_endpoint, **self._connection_parameters)
+            connection = TCPConnection(self.__server_endpoint, **self._connection_parameters)
         if not connection.connected:
             await connection.connect()
         return connection
@@ -444,8 +448,8 @@ class ClusterPool(Pool):
          refer to :class:`~memcachio.connection.ConnectionParams`
         """
         self._cluster_pools: dict[SingleMemcachedInstanceEndpoint, SingleServerPool] = {}
-        self._pool_lock = asyncio.Lock()
-        self._initialized = False
+        self.__pool_lock = asyncio.Lock()
+        self.__initialized = False
         super().__init__(
             endpoint,
             min_connections=min_connections,
@@ -454,20 +458,20 @@ class ClusterPool(Pool):
             idle_connection_timeout=idle_connection_timeout,
             **connection_args,
         )
-        self._all_endpoints: set[SingleMemcachedInstanceEndpoint] = {
+        self.__all_endpoints: set[SingleMemcachedInstanceEndpoint] = {
             normalize_single_server_endpoint(endpoint)
             for endpoint in cast(Iterable[SingleMemcachedInstanceEndpoint], self.endpoint)
         }
-        self._unhealthy_endpoints: set[SingleMemcachedInstanceEndpoint] = set()
-        self._router = KeyRouter(self._all_endpoints, hasher=hashing_function)
-        self._health_check_tasks: dict[SingleMemcachedInstanceEndpoint, asyncio.Task[None]] = {}
+        self.__unhealthy_endpoints: set[SingleMemcachedInstanceEndpoint] = set()
+        self._router = KeyRouter(self.__all_endpoints, hasher=hashing_function)
+        self.__healthcheck_tasks: dict[SingleMemcachedInstanceEndpoint, asyncio.Task[None]] = {}
         self.__endpoint_healthcheck_config: EndpointHealthcheckConfig = (
             endpoint_healthcheck_config or EndpointHealthcheckConfig()
         )
 
     @property
     def endpoints(self) -> set[SingleMemcachedInstanceEndpoint]:
-        return self._all_endpoints - self._unhealthy_endpoints
+        return self.__all_endpoints - self.__unhealthy_endpoints
 
     @property
     def metrics(self) -> PoolMetrics:
@@ -478,7 +482,7 @@ class ClusterPool(Pool):
         return PoolMetrics.merge(
             [
                 self._cluster_pools[endpoint].metrics
-                for endpoint in self._all_endpoints
+                for endpoint in self.__all_endpoints
                 if endpoint in self._cluster_pools
             ]
         )
@@ -488,7 +492,7 @@ class ClusterPool(Pool):
         Add a new endpoint to this pool
         """
         normalized_endpoint = normalize_single_server_endpoint(endpoint)
-        self._all_endpoints.add(normalized_endpoint)
+        self.__all_endpoints.add(normalized_endpoint)
         self._router.add_node(normalized_endpoint)
         if normalized_endpoint not in self._cluster_pools:
             self._cluster_pools[normalized_endpoint] = SingleServerPool(
@@ -506,7 +510,7 @@ class ClusterPool(Pool):
         all connections to that endpoint.
         """
         normalized_endpoint = normalize_single_server_endpoint(endpoint)
-        self._all_endpoints.discard(normalized_endpoint)
+        self.__all_endpoints.discard(normalized_endpoint)
         self._router.remove_node(normalized_endpoint)
         if pool := self._cluster_pools.pop(normalized_endpoint, None):
             pool.close()
@@ -523,25 +527,25 @@ class ClusterPool(Pool):
         normalized_endpoint = normalize_single_server_endpoint(endpoint)
         match status:
             case EndpointStatus.UP:
-                self._unhealthy_endpoints.discard(normalized_endpoint)
+                self.__unhealthy_endpoints.discard(normalized_endpoint)
                 self._router.add_node(normalized_endpoint)
             case EndpointStatus.DOWN:
-                self._unhealthy_endpoints.add(normalized_endpoint)
+                self.__unhealthy_endpoints.add(normalized_endpoint)
                 self._router.remove_node(normalized_endpoint)
         self._cluster_pools[normalized_endpoint].metrics.on_status_update(status)
 
     async def initialize(self) -> None:
-        if self._initialized:
+        if self.__initialized:
             return
-        async with self._pool_lock:
-            if self._initialized:
+        async with self.__pool_lock:
+            if self.__initialized:
                 return
             for endpoint in self.endpoints:
                 self.add_endpoint(endpoint)
             await asyncio.gather(
                 *[self._cluster_pools[endpoint].initialize() for endpoint in self.endpoints]
             )
-            self._initialized = True
+            self.__initialized = True
 
     async def execute_command(self, command: Command[R]) -> None:
         """
@@ -585,10 +589,10 @@ class ClusterPool(Pool):
         except MemcachioConnectionError as e:
             if self.__endpoint_healthcheck_config.remove_unhealthy_endpoints:
                 if (
-                    not (current_task := self._health_check_tasks.get(e.endpoint, None))
+                    not (current_task := self.__healthcheck_tasks.get(e.endpoint, None))
                     or current_task.done()
                 ):
-                    self._health_check_tasks[e.endpoint] = asyncio.create_task(
+                    self.__healthcheck_tasks[e.endpoint] = asyncio.create_task(
                         self.__check_endpoint_health(e.endpoint)
                     )
             raise
@@ -627,7 +631,7 @@ class ClusterPool(Pool):
                     break
 
                 if (
-                    endpoint in self._unhealthy_endpoints
+                    endpoint in self.__unhealthy_endpoints
                     and self.__endpoint_healthcheck_config.monitor_unhealthy_endpoints
                     and attempt < self.__endpoint_healthcheck_config.maximum_recovery_attempts
                 ):
@@ -647,9 +651,8 @@ class ClusterPool(Pool):
     def close(self) -> None:
         for pool in self._cluster_pools.values():
             pool.close()
-        for task in self._health_check_tasks.values():
+        for task in self.__healthcheck_tasks.values():
             task.cancel()
-        self._health_check_tasks.clear()
-        self._unhealthy_endpoints.clear()
-        self._cluster_pools.clear()
-        self._initialized = False
+        self.__healthcheck_tasks.clear()
+        self.__unhealthy_endpoints.clear()
+        self.__initialized = False
