@@ -151,8 +151,17 @@ class Client(Generic[AnyStr]):
          commands. If none is provided the default :func:`hashlib.md5` implementation from the
          standard library is used.
 
-         .. note:: This parameter is only relevant when using a cluster
-        :param connection_pool: An optional pre-initialized connection pool. If provided, memcached_location must be None.
+         .. note:: This parameter is only relevant when connecting to multiple memcached servers
+        :param endpoint_healthcheck_config: Configuration to control whether
+         endpoints are automatically removed/recovered based on health checks.
+
+         .. note:: This parameter is only relevant when connecting to multiple memcached servers
+        :param connection_pool: An optional pre-initialized connection pool.
+         If provided, memcached_location must be None.
+
+         .. note:: All connection/connection pool related arguments will be ignored when
+            a ``connection_pool`` is provided as the arguments provided when creating
+            the pool itself will be in effect.
         :param connect_timeout: Timeout (in seconds) for establishing a connection.
         :param read_timeout: Timeout (in seconds) for reading from a connection.
         :param socket_nodelay: If True, disable Nagle's algorithm on the socket.

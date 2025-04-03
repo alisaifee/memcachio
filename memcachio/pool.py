@@ -443,8 +443,8 @@ class ClusterPool(Pool):
         :param hashing_function: A function to use for routing keys to
          endpoints for multi-key commands. If none is provided the default
          :func:`hashlib.md5` implementation from the standard library is used.
-        :param endpoint_healthcheck_config: Endpoint healthcheck configuration to control whether
-         endpoints are automatically removed/recovered based on healthchecks.
+        :param endpoint_healthcheck_config: Configuration to control whether
+         endpoints are automatically removed/recovered based on health checks.
         :param connection_args: Arguments to pass to the constructor of :class:`~memcachio.BaseConnection`.
          refer to :class:`~memcachio.connection.ConnectionParams`
         """
