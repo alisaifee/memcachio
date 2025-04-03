@@ -44,7 +44,7 @@ from memcachio.defaults import (
     MIN_CONNECTIONS,
     READ_TIMEOUT,
 )
-from memcachio.pool import ClusterPool, Pool, SingleServerPool
+from memcachio.pool import ClusterPool, NodeHealthcheckConfig, Pool, SingleServerPool
 from memcachio.types import KeyT, MemcachedItem, MemcachedLocator, ValueT, is_single_server
 
 R = TypeVar("R")
@@ -65,6 +65,7 @@ class Client(Generic[AnyStr]):
         blocking_timeout: float = ...,
         idle_connection_timeout: float = ...,
         hashing_function: Callable[[str], int] | None = ...,
+        node_healthcheck_config: NodeHealthcheckConfig | None = ...,
         connection_pool: Pool | None = ...,
         connect_timeout: float | None = ...,
         read_timeout: float | None = ...,
@@ -89,6 +90,7 @@ class Client(Generic[AnyStr]):
         blocking_timeout: float = ...,
         idle_connection_timeout: float = ...,
         hashing_function: Callable[[str], int] | None = ...,
+        node_healthcheck_config: NodeHealthcheckConfig | None = ...,
         connection_pool: Pool | None = ...,
         connect_timeout: float | None = ...,
         read_timeout: float | None = ...,
@@ -112,6 +114,7 @@ class Client(Generic[AnyStr]):
         blocking_timeout: float = BLOCKING_TIMEOUT,
         idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
         hashing_function: Callable[[str], int] | None = None,
+        node_healthcheck_config: NodeHealthcheckConfig | None = None,
         connection_pool: Pool | None = None,
         connect_timeout: float | None = CONNECT_TIMEOUT,
         read_timeout: float | None = READ_TIMEOUT,
@@ -142,6 +145,8 @@ class Client(Generic[AnyStr]):
          standard library is used.
 
          .. note:: This parameter is only relevant when using a cluster
+        :param node_healthcheck_config: Node healthcheck configuration to control whether
+         nodes are automatically removed/recovered based on healthchecks.
         :param connection_pool: An optional pre-initialized connection pool. If provided, memcached_location must be None.
         :param connect_timeout: Timeout (in seconds) for establishing a connection.
         :param read_timeout: Timeout (in seconds) for reading from a connection.
@@ -164,6 +169,7 @@ class Client(Generic[AnyStr]):
                 blocking_timeout=blocking_timeout,
                 idle_connection_timeout=idle_connection_timeout,
                 hashing_function=hashing_function,
+                node_healthcheck_config=node_healthcheck_config,
                 connect_timeout=connect_timeout,
                 read_timeout=read_timeout,
                 socket_nodelay=socket_nodelay,
@@ -195,6 +201,7 @@ class Client(Generic[AnyStr]):
         blocking_timeout: float = BLOCKING_TIMEOUT,
         idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
         hashing_function: Callable[[str], int] | None = None,
+        node_healthcheck_config: NodeHealthcheckConfig | None = None,
         **connection_args: Unpack[ConnectionParams],
     ) -> Pool:
         """
@@ -203,22 +210,26 @@ class Client(Generic[AnyStr]):
 
         :meta private:
         """
-        kls: type[Pool]
-        extra_args = {}
         if is_single_server(locator):
-            kls = SingleServerPool
+            return SingleServerPool(
+                locator,
+                min_connections=min_connections,
+                max_connections=max_connections,
+                blocking_timeout=blocking_timeout,
+                idle_connection_timeout=idle_connection_timeout,
+                **connection_args,
+            )
         else:
-            kls = ClusterPool
-            extra_args["hashing_function"] = hashing_function
-        return kls(
-            locator,
-            min_connections=min_connections,
-            max_connections=max_connections,
-            blocking_timeout=blocking_timeout,
-            idle_connection_timeout=idle_connection_timeout,
-            **extra_args,
-            **connection_args,
-        )
+            return ClusterPool(
+                locator,  # type: ignore[arg-type]
+                min_connections=min_connections,
+                max_connections=max_connections,
+                blocking_timeout=blocking_timeout,
+                idle_connection_timeout=idle_connection_timeout,
+                hashing_function=hashing_function,
+                node_healthcheck_config=node_healthcheck_config,
+                **connection_args,
+            )
 
     async def execute_command(self, command: Command[R]) -> None:
         """

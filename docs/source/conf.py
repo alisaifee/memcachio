@@ -36,6 +36,7 @@ html_baseurl = "https://memcachio.readthedocs.io/"
 sitemap_url_scheme = "en/stable/{link}"
 
 extensions = [
+    "enum_tools.autoenum",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.autosummary",

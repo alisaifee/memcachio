@@ -7,6 +7,7 @@ from collections import Counter
 import mmh3
 import pytest
 
+from memcachio.errors import NoAvailableNodes
 from memcachio.routing import KeyRouter
 
 
@@ -20,10 +21,15 @@ from memcachio.routing import KeyRouter
     ids=["default(md5)", "mmh3", "blake2s"],
 )
 class TestRouting:
+    def test_empty_router(self, hasher):
+        router = KeyRouter(set(), hasher)
+        with pytest.raises(NoAvailableNodes):
+            router.get_node("fubar")
+
     def test_single_node(self, hasher):
         router = KeyRouter(hasher=hasher)
         router.add_node("/var/tmp/socket")
-        assert {"/var/tmp/socket"} == set(router.get_node(f"key{i}") for i in range(4096))
+        assert {"/var/tmp/socket"} == {router.get_node(f"key{i}") for i in range(4096)}
 
     @pytest.mark.parametrize(
         "nodes",

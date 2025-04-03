@@ -17,14 +17,20 @@ Default values
 
 Connection Pool
 ---------------
-.. autoclass:: memcachio.pool.Pool
+.. autoclass:: memcachio.Pool
    :class-doc-from: both
 
-.. autoclass:: memcachio.pool.SingleServerPool
+.. autoclass:: memcachio.SingleServerPool
    :class-doc-from: both
 
-.. autoclass:: memcachio.pool.ClusterPool
+.. autoclass:: memcachio.ClusterPool
    :class-doc-from: both
+
+.. autoclass:: memcachio.NodeHealthcheckConfig
+   :no-inherited-members:
+
+.. autoenum:: memcachio.NodeStatus
+   :no-inherited-members:
 
 Connections
 -----------
@@ -47,7 +53,7 @@ Types
 -----
 .. automodule:: memcachio.types
    :no-inherited-members:
-.. autoclass:: memcachio.connection.ConnectionParams
+.. autoclass:: memcachio.ConnectionParams
    :no-inherited-members:
    :class-doc-from: both
 

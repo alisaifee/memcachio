@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 
+from .errors import NoAvailableNodes
 from .types import SingleMemcachedInstanceLocator
 
 
@@ -44,4 +45,6 @@ class KeyRouter:
         """
         Get the node associated with ``key``
         """
+        if not self.nodes:
+            raise NoAvailableNodes()
         return max(self.nodes, key=lambda node: self._hasher(f"{node}:{key}"))

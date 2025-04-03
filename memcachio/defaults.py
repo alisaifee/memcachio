@@ -19,3 +19,14 @@ READ_TIMEOUT = None
 MAX_INFLIGHT_REQUESTS_PER_CONNECTION = 100
 #:  Threshold for allowing the connection to be reused when there are requests pending.
 MAX_AVERAGE_RESPONSE_TIME_FOR_CONNECTION_REUSE = 0.05
+
+#: Whether to remove unhealthy nodes on connection errors.
+#: This is the default value for :attr:`~memcachio.NodeHealthcheckConfig.remove_unhealthy_nodes`
+REMOVE_UNHEALTHY_NODES = False
+#: Whether to monitor unhealthy nodes after they have been
+#: removed and attempt to restore them if they recover
+#: This is the default value for :attr:`~memcachio.NodeHealthcheckConfig.monitor_unhealthy_nodes`
+MONITOR_UNHEALTHY_NODES = False
+#: Maximum attempts to make to recover unhealthy nodes
+#: This is the default value for :attr:`~memcachio.NodeHealthcheckConfig.maximum_recovery_attempts`
+MAXIMUM_RECOVERY_ATTEMPTS = 4

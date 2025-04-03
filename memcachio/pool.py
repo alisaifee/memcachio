@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import enum
+import logging
 import time
 import weakref
 from abc import ABC, abstractmethod
@@ -20,19 +23,47 @@ from .defaults import (
     BLOCKING_TIMEOUT,
     IDLE_CONNECTION_TIMEOUT,
     MAX_CONNECTIONS,
+    MAXIMUM_RECOVERY_ATTEMPTS,
     MIN_CONNECTIONS,
+    MONITOR_UNHEALTHY_NODES,
+    REMOVE_UNHEALTHY_NODES,
 )
-from .errors import ConnectionNotAvailable
+from .errors import ConnectionNotAvailable, MemcachioConnectionError
 from .routing import KeyRouter
 from .types import (
     MemcachedLocator,
     SingleMemcachedInstanceLocator,
     UnixSocketLocator,
-    is_single_server,
     normalize_locator,
+    normalize_single_server_locator,
 )
 
 R = TypeVar("R")
+
+logger = logging.getLogger(__name__)
+
+
+class NodeStatus(enum.IntEnum):
+    """
+    Enumeration of node statuses.
+    Used by :meth:`~ClusterPool.mark_node`
+    """
+
+    #: Mark the node as up and usable
+    UP = enum.auto()
+    #: Mark the node as down and not in use
+    DOWN = enum.auto()
+
+
+@dataclasses.dataclass
+class NodeHealthcheckConfig:
+    #: Whether to remove unhealthy nodes on connection errors
+    remove_unhealthy_nodes: bool = REMOVE_UNHEALTHY_NODES
+    #: Whether to monitor unhealthy nodes after they have been
+    #: removed and attempt to restore them if they recover
+    monitor_unhealthy_nodes: bool = MONITOR_UNHEALTHY_NODES
+    #: Maximum attempts to make to recover unhealthy nodes
+    maximum_recovery_attempts: int = MAXIMUM_RECOVERY_ATTEMPTS
 
 
 class Pool(ABC):
@@ -119,6 +150,7 @@ class SingleServerPool(Pool):
             idle_connection_timeout=idle_connection_timeout,
             **connection_args,
         )
+        self._server_locator = locator
         self._connections: asyncio.Queue[BaseConnection | None] = asyncio.LifoQueue(
             self._max_connections
         )
@@ -146,23 +178,32 @@ class SingleServerPool(Pool):
                 return
             for _ in range(self._min_connections):
                 connection = self._connections.get_nowait()
-                if not connection:
-                    self._connections.put_nowait(await self._create_connection())
+                try:
+                    if not connection:
+                        self._connections.put_nowait(await self._create_connection())
+                except ConnectionError:
+                    self._connections.put_nowait(None)
+                    raise
             self._initialized = True
 
     async def execute_command(self, command: Command[R]) -> None:
         connection, release = None, None
-        connection, release = await self.acquire(command)
-        await connection.connect()
-        connection.create_request(command)
-        await command.request_sent
-        if release:
-            if command.noreply:
-                self._connections.put_nowait(connection)
-            else:
-                command.response.add_done_callback(
-                    lambda _: self._connections.put_nowait(connection)
-                )
+        try:
+            connection, release = await self.acquire(command)
+            await connection.connect()
+            connection.create_request(command)
+            await command.request_sent
+            if release:
+                if command.noreply:
+                    self._connections.put_nowait(connection)
+                else:
+                    command.response.add_done_callback(
+                        lambda _: self._connections.put_nowait(connection)
+                    )
+        except MemcachioConnectionError:
+            if release:
+                self._connections.put_nowait(None)
+            raise
 
     async def acquire(self, command: Command[Any]) -> tuple[BaseConnection, bool]:
         await self.initialize()
@@ -170,15 +211,19 @@ class SingleServerPool(Pool):
         try:
             async with asyncio.timeout(self._blocking_timeout):
                 connection = await self._connections.get()
-                if connection and connection.reusable:
-                    self._connections.put_nowait(connection)
-                    released = True
-                else:
-                    if not connection:
-                        connection = await self._create_connection()
+                try:
+                    if connection and connection.reusable:
+                        self._connections.put_nowait(connection)
+                        released = True
+                    else:
+                        if not connection:
+                            connection = await self._create_connection()
+                except ConnectionError:
+                    self._connections.put_nowait(None)
+                    raise
             return connection, not released
         except TimeoutError:
-            raise ConnectionNotAvailable(self, self._blocking_timeout)
+            raise ConnectionNotAvailable(self._server_locator, self._blocking_timeout)
 
     def close(self) -> None:
         while True:
@@ -187,16 +232,19 @@ class SingleServerPool(Pool):
                     connection.close()
             except asyncio.QueueEmpty:
                 break
+        while True:
+            try:
+                self._connections.put_nowait(None)
+            except asyncio.QueueFull:
+                break
         self._initialized = False
 
     async def _create_connection(self) -> BaseConnection:
-        connection: BaseConnection | None = None
-        if is_single_server(self.locator):
-            if isinstance(self.locator, UnixSocketLocator):
-                connection = UnixSocketConnection(self.locator, **self._connection_parameters)
-            else:
-                connection = TCPConnection(self.locator, **self._connection_parameters)
-        assert connection
+        connection: BaseConnection
+        if isinstance(self._server_locator, UnixSocketLocator):
+            connection = UnixSocketConnection(self._server_locator, **self._connection_parameters)
+        else:
+            connection = TCPConnection(self._server_locator, **self._connection_parameters)
         if not connection.connected:
             await connection.connect()
         return connection
@@ -208,7 +256,7 @@ class SingleServerPool(Pool):
             and len(self._active_connections) > self._min_connections
         ):
             connection.close()
-            self._active_connections.remove(connection)
+            self._active_connections.discard(connection)
         elif connection.connected:
             asyncio.get_running_loop().call_later(
                 self._idle_connection_timeout, self.__check_connection_idle, connection
@@ -222,7 +270,7 @@ class SingleServerPool(Pool):
             )
 
     def __on_connection_disconnected(self, connection: BaseConnection) -> None:
-        self._active_connections.remove(connection)
+        self._active_connections.discard(connection)
 
 
 class ClusterPool(Pool):
@@ -242,6 +290,7 @@ class ClusterPool(Pool):
         blocking_timeout: float = BLOCKING_TIMEOUT,
         idle_connection_timeout: float = IDLE_CONNECTION_TIMEOUT,
         hashing_function: Callable[[str], int] | None = None,
+        node_healthcheck_config: NodeHealthcheckConfig | None = None,
         **connection_args: Unpack[ConnectionParams],
     ) -> None:
         """
@@ -254,6 +303,8 @@ class ClusterPool(Pool):
         :param hashing_function: A function to use for routing keys to
          nodes for multi-key commands. If none is provided the default
          :func:`hashlib.md5` implementation from the standard library is used.
+        :param node_healthcheck_config: Node healthcheck configuration to control whether
+         nodes are automatically removed/recovered based on healthchecks.
         :param connection_args: Arguments to pass to the constructor of :class:`~memcachio.BaseConnection`.
          refer to :class:`~memcachio.connection.ConnectionParams`
         """
@@ -268,11 +319,66 @@ class ClusterPool(Pool):
             idle_connection_timeout=idle_connection_timeout,
             **connection_args,
         )
-        self._router = KeyRouter(self.nodes, hasher=hashing_function)
+        self._all_nodes: set[SingleMemcachedInstanceLocator] = {
+            normalize_single_server_locator(locator)
+            for locator in cast(Iterable[SingleMemcachedInstanceLocator], self.locator)
+        }
+        self._unhealthy_nodes: set[SingleMemcachedInstanceLocator] = set()
+        self._router = KeyRouter(self._all_nodes, hasher=hashing_function)
+        self._health_check_locks: dict[SingleMemcachedInstanceLocator, asyncio.Lock] = defaultdict(
+            asyncio.Lock
+        )
+        self.__node_healthcheck_config: NodeHealthcheckConfig = (
+            node_healthcheck_config or NodeHealthcheckConfig()
+        )
 
     @property
     def nodes(self) -> set[SingleMemcachedInstanceLocator]:
-        return set(cast(Iterable[SingleMemcachedInstanceLocator], self.locator))
+        return self._all_nodes - self._unhealthy_nodes
+
+    def add_node(self, node: SingleMemcachedInstanceLocator) -> None:
+        """
+        Add a new node to this pool
+        """
+        normalized_node = normalize_single_server_locator(node)
+        self._all_nodes.add(normalized_node)
+        self._router.add_node(normalized_node)
+        if normalized_node not in self._cluster_pools:
+            self._cluster_pools[normalized_node] = SingleServerPool(
+                normalized_node,
+                min_connections=self._min_connections,
+                max_connections=self._max_connections,
+                blocking_timeout=self._blocking_timeout,
+                idle_connection_timeout=self._idle_connection_timeout,
+                **self._connection_parameters,
+            )
+
+    def remove_node(self, node: SingleMemcachedInstanceLocator) -> None:
+        """
+        Remove a node from this pool. This will immediately also close
+        all connections to that node.
+        """
+        normalized_node = normalize_single_server_locator(node)
+        self._all_nodes.discard(normalized_node)
+        self._router.remove_node(normalized_node)
+        if pool := self._cluster_pools.pop(normalized_node, None):
+            pool.close()
+
+    def mark_node(self, node: SingleMemcachedInstanceLocator, status: NodeStatus) -> None:
+        """
+        Change the status of a node in this pool.
+        Marking a node as :enum:`NodeStatus.DOWN` will immediately stop routing
+        requests to it, while marking it as :enum:`NodeStatus.UP` will immediately
+        start routing requests to it.
+        """
+        normalized_node = normalize_single_server_locator(node)
+        match status:
+            case NodeStatus.UP:
+                self._unhealthy_nodes.discard(normalized_node)
+                self._router.add_node(normalized_node)
+            case NodeStatus.DOWN:
+                self._unhealthy_nodes.add(normalized_node)
+                self._router.remove_node(normalized_node)
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -281,15 +387,8 @@ class ClusterPool(Pool):
             if self._initialized:
                 return
             for node in self.nodes:
-                self._cluster_pools[node] = SingleServerPool(
-                    node,
-                    min_connections=self._min_connections,
-                    max_connections=self._max_connections,
-                    blocking_timeout=self._blocking_timeout,
-                    idle_connection_timeout=self._idle_connection_timeout,
-                    **self._connection_parameters,
-                )
-            await asyncio.gather(*[pool.initialize() for pool in self._cluster_pools.values()])
+                self.add_node(node)
+            await asyncio.gather(*[self._cluster_pools[node].initialize() for node in self.nodes])
             self._initialized = True
 
     async def execute_command(self, command: Command[R]) -> None:
@@ -299,38 +398,90 @@ class ClusterPool(Pool):
         as it will be updated when the response(s) (or exception) are available on the transport
         and merged (if it is a command that spans multiple nodes).
         """
-        await self.initialize()
-        if command.keys and len(command.keys) == 1:
-            await self._cluster_pools[self._router.get_node(command.keys[0])].execute_command(
-                command
-            )
-        else:
-            mapping = defaultdict(list)
-            if command.keys:
-                for key in command.keys:
-                    mapping[self._router.get_node(key)].append(key)
-                node_commands = {node: command.clone(keys) for node, keys in mapping.items()}
+        try:
+            await self.initialize()
+            if command.keys and len(command.keys) == 1:
+                await self._cluster_pools[self._router.get_node(command.keys[0])].execute_command(
+                    command
+                )
             else:
-                node_commands = {
-                    node: command.clone(command.keys) for node in self._cluster_pools.keys()
-                }
-            await asyncio.gather(
-                *[
-                    self._cluster_pools[node].execute_command(node_command)
-                    for node, node_command in node_commands.items()
-                ]
-            )
-            if not command.noreply:
-                command.response.set_result(
-                    command.merge(
-                        await asyncio.gather(
-                            *[command.response for command in node_commands.values()]
+                mapping = defaultdict(list)
+                if command.keys:
+                    for key in command.keys:
+                        mapping[self._router.get_node(key)].append(key)
+                    node_commands = {node: command.clone(keys) for node, keys in mapping.items()}
+                else:
+                    node_commands = {node: command.clone(command.keys) for node in self.nodes}
+                await asyncio.gather(
+                    *[
+                        self._cluster_pools[node].execute_command(node_command)
+                        for node, node_command in node_commands.items()
+                    ]
+                )
+                if not command.noreply:
+                    command.response.set_result(
+                        command.merge(
+                            await asyncio.gather(
+                                *[command.response for command in node_commands.values()]
+                            )
                         )
                     )
+        except MemcachioConnectionError as e:
+            if self.__node_healthcheck_config.remove_unhealthy_nodes:
+                asyncio.get_running_loop().call_soon(
+                    asyncio.create_task, self.__check_node_health(e.instance)
                 )
+            raise
+
+    async def __check_node_health(
+        self, instance: SingleMemcachedInstanceLocator, attempt: int = 0
+    ) -> None:
+        if (
+            self._health_check_locks[instance].locked()
+            or instance not in self._cluster_pools
+            or attempt > self.__node_healthcheck_config.maximum_recovery_attempts
+        ):
+            return
+
+        async with self._health_check_locks[instance]:
+            try:
+                if pool := self._cluster_pools.get(instance, None):
+                    await pool.initialize()
+                    if any(pool._active_connections):
+                        if self.__node_healthcheck_config.monitor_unhealthy_nodes:
+                            logger.info(f"Node {instance} has recovered after {2**attempt} seconds")
+                            self.mark_node(instance, NodeStatus.UP)
+                        return
+                    else:
+                        pool.close()
+            except MemcachioConnectionError:
+                self.mark_node(instance, NodeStatus.DOWN)
+                if (
+                    not self.__node_healthcheck_config.monitor_unhealthy_nodes
+                    or attempt == self.__node_healthcheck_config.maximum_recovery_attempts
+                ):
+                    logger.error(f"Node {instance} unreachable and marked down")
+                    return
+            except Exception:
+                logger.exception("Unknown error while checking node health")
+                return
+
+        if (
+            instance in self._unhealthy_nodes
+            and self.__node_healthcheck_config.monitor_unhealthy_nodes
+            and attempt < self.__node_healthcheck_config.maximum_recovery_attempts
+        ):
+            delay = 2**attempt
+            logger.debug(
+                f"Node {instance} still down, attempting recovery attempt in {delay} seconds"
+            )
+            asyncio.get_running_loop().call_later(
+                delay, asyncio.create_task, self.__check_node_health(instance, attempt + 1)
+            )
 
     def close(self) -> None:
         for pool in self._cluster_pools.values():
             pool.close()
+        self._unhealthy_nodes.clear()
         self._cluster_pools.clear()
         self._initialized = False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from contextlib import closing
 from unittest.mock import ANY, call
 
@@ -9,7 +10,8 @@ from pytest_lazy_fixtures import lf
 
 from memcachio import BaseConnection, ClusterPool, SingleServerPool
 from memcachio.commands import FlushAllCommand, GetCommand, SetCommand, TouchCommand, VersionCommand
-from memcachio.errors import ConnectionNotAvailable
+from memcachio.errors import ConnectionNotAvailable, MemcachioConnectionError, NoAvailableNodes
+from memcachio.pool import NodeHealthcheckConfig, NodeStatus
 from tests.conftest import pypy_flaky_marker
 
 pytestmark = pypy_flaky_marker()
@@ -109,3 +111,142 @@ class TestClusterPool:
                 * len(cluster_locator)
             )
             assert await command.response
+
+    async def test_node_removal(self, cluster_locator, mocker):
+        pool = ClusterPool(cluster_locator)
+        nodes = pool.nodes
+        first_node = list(nodes).pop()
+        with closing(pool):
+            pool.remove_node("/var/tmp/not-in-pool")
+            assert pool.nodes == nodes
+            assert first_node in pool.nodes
+            pool.remove_node(first_node)
+            assert first_node not in pool.nodes
+
+    async def test_all_nodes_removed(self, cluster_locator, mocker):
+        pool = ClusterPool(cluster_locator)
+        nodes = pool.nodes
+        with closing(pool):
+            await pool.initialize()
+            [pool.remove_node(node) for node in nodes]
+            get = GetCommand("key")
+            with pytest.raises(NoAvailableNodes):
+                await pool.execute_command(get)
+
+    async def test_node_addition(self, cluster_locator, mocker):
+        pool = ClusterPool(cluster_locator)
+        nodes = pool.nodes
+        new_locator = "/var/tmp/new-instance-not-real.sock"
+        with closing(pool):
+            pool.add_node(new_locator)
+            assert pool.nodes == nodes | {new_locator}
+            [pool.remove_node(k) for k in nodes if k != new_locator]
+            get = GetCommand("key")
+            with pytest.raises(
+                MemcachioConnectionError, match=f"memcached instance: {new_locator}"
+            ):
+                await pool.execute_command(get)
+
+    async def test_mark_node_unhealthy(self, cluster_locator, mocker):
+        pool = ClusterPool(cluster_locator)
+        bad_node = "/var/tmp/new-instance-not-real.sock"
+        pool.add_node(bad_node)
+        with closing(pool):
+            get = GetCommand("key")
+            with pytest.raises(MemcachioConnectionError, match=f"memcached instance: {bad_node}"):
+                await pool.execute_command(get)
+            pool.mark_node(bad_node, NodeStatus.DOWN)
+            get = GetCommand("key")
+            await pool.execute_command(get)
+            assert {} == await get.response
+
+    async def test_auto_removal_unhealthy_node(self, cluster_locator, mocker):
+        pool = ClusterPool(
+            cluster_locator,
+            node_healthcheck_config=NodeHealthcheckConfig(remove_unhealthy_nodes=True),
+        )
+        with closing(pool):
+            await pool.initialize()
+            target_node = pool._router.get_node("key")
+
+            async def raise_error(*args):
+                if instance_pool := pool._cluster_pools.get(target_node, None):
+                    for connection in instance_pool._active_connections:
+                        connection.close()
+                    instance_pool.close()
+                raise MemcachioConnectionError(instance=target_node, message="something bad")
+
+            with closing(pool):
+                get = GetCommand("key")
+                mocker.patch.object(
+                    pool._cluster_pools[target_node],
+                    "execute_command",
+                    side_effect=raise_error,
+                    autospec=True,
+                )
+                mocker.patch.object(
+                    pool._cluster_pools[target_node],
+                    "initialize",
+                    side_effect=raise_error,
+                    autospec=True,
+                )
+                with pytest.raises(
+                    MemcachioConnectionError,
+                    match=re.escape(f"something bad (memcached instance: {target_node})"),
+                ):
+                    await pool.execute_command(get)
+                await asyncio.sleep(0.01)
+                assert target_node not in pool.nodes
+
+    async def test_auto_recovery_unhealthy_node(self, cluster_locator, mocker):
+        pool = ClusterPool(
+            cluster_locator,
+            node_healthcheck_config=NodeHealthcheckConfig(
+                remove_unhealthy_nodes=True, monitor_unhealthy_nodes=True
+            ),
+        )
+        with closing(pool):
+            await pool.initialize()
+            target_node = pool._router.get_node("key")
+
+            async def raise_error(*args, **kwargs):
+                if instance_pool := pool._cluster_pools.get(target_node, None):
+                    for connection in instance_pool._active_connections:
+                        connection.close()
+                raise MemcachioConnectionError(instance=target_node, message="something bad")
+
+            with closing(pool):
+                get = GetCommand("key")
+
+                mocker.patch.object(
+                    pool._cluster_pools[target_node],
+                    "execute_command",
+                    side_effect=raise_error,
+                    autospec=True,
+                )
+                mocker.patch.object(
+                    pool._cluster_pools[target_node],
+                    "initialize",
+                    side_effect=raise_error,
+                    autospec=True,
+                )
+
+                with pytest.raises(
+                    MemcachioConnectionError,
+                    match=re.escape(f"something bad (memcached instance: {target_node})"),
+                ):
+                    await pool.execute_command(get)
+
+                await asyncio.sleep(0.01)
+
+                assert target_node not in pool.nodes
+
+                mocker.stopall()
+
+                await asyncio.sleep(5)
+
+                assert target_node in pool.nodes
+
+                get = GetCommand("key")
+                await pool.execute_command(get)
+                assert {} == await get.response
