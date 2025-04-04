@@ -172,6 +172,48 @@ class TestConnectionOptions:
         connection = memcachio.UnixSocketConnection(memcached_uds, socket_nodelay=True)
         with closing(connection):
             await connection.connect()
-            with closing(connection):
+            assert connection.connected
+
+    async def test_socket_keepalive_options(self, memcached_1):
+        connection = memcachio.TCPConnection(
+            memcached_1,
+            socket_keepalive=False,
+        )
+        with closing(connection):
+            await connection.connect()
+            assert 0 == connection._transport.get_extra_info("socket").getsockopt(
+                socket.SOL_SOCKET, socket.SO_KEEPALIVE
+            )
+
+        connection = memcachio.TCPConnection(
+            memcached_1,
+            socket_keepalive=True,
+            socket_keepalive_options={
+                socket.TCP_KEEPINTVL: 1,
+                socket.TCP_KEEPCNT: 2,
+            },
+        )
+        with closing(connection):
+            await connection.connect()
+            assert 0 != connection._transport.get_extra_info("socket").getsockopt(
+                socket.SOL_SOCKET, socket.SO_KEEPALIVE
+            )
+            assert 1 == connection._transport.get_extra_info("socket").getsockopt(
+                socket.IPPROTO_TCP, socket.TCP_KEEPINTVL
+            )
+            assert 2 == connection._transport.get_extra_info("socket").getsockopt(
+                socket.IPPROTO_TCP, socket.TCP_KEEPCNT
+            )
+
+    async def test_invalid_socket_options(self, memcached_1):
+        connection = memcachio.TCPConnection(
+            memcached_1,
+            socket_keepalive=True,
+            socket_keepalive_options={
+                666: 1,
+            },
+        )
+        with closing(connection):
+            with pytest.raises(MemcachioConnectionError) as exc_info:
                 await connection.connect()
-                assert connection.connected
+            assert "Protocol not available" in exc_info.value.__cause__.args

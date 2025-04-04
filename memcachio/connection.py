@@ -272,13 +272,14 @@ class BaseConnection(BaseProtocol, ABC):
                 ):
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, self._socket_nodelay)
 
-                if self._socket_keepalive:
-                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                if self._socket_keepalive is not None:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, self._socket_keepalive)
                     for k, v in self._socket_keepalive_options.items():
-                        sock.setsockopt(socket.SOL_TCP, k, v)
-            except (OSError, TypeError):
+                        sock.setsockopt(socket.IPPROTO_TCP, k, v)
+            except (OSError, TypeError) as err:
                 transport.close()
-                raise
+                self._last_error = err
+                return
         with suppress(RuntimeError):
             [cb(self) for cb in self._connect_callbacks]
         self._write_ready.set()
@@ -384,12 +385,14 @@ class TCPConnection(BaseConnection):
                                 port=self._port,
                                 ssl=self._ssl_context,
                             )
+                            await self._write_ready.wait()
+                            if self._auth:
+                                await self._authenticate()
                     except (OSError, TimeoutError) as e:
                         msg = f"Unable to establish a connection within {self._connect_timeout} seconds"
-                        raise MemcachioConnectionError(msg, self.endpoint) from e
-                    await self._write_ready.wait()
-                    if self._auth:
-                        await self._authenticate()
+                        raise MemcachioConnectionError(msg, self.endpoint) from (
+                            self._last_error or e
+                        )
 
 
 class UnixSocketConnection(BaseConnection):
