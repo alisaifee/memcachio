@@ -266,8 +266,12 @@ class BaseConnection(BaseProtocol, ABC):
         self._transport = cast(Transport, transport)
         if (sock := self._transport.get_extra_info("socket")) is not None:
             try:
-                if self._socket_nodelay:
-                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                if self._socket_nodelay is not None and sock.family in (
+                    socket.AF_INET,
+                    socket.AF_INET6,
+                ):
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, self._socket_nodelay)
+
                 if self._socket_keepalive:
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
                     for k, v in self._socket_keepalive_options.items():

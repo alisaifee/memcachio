@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from contextlib import closing
 from io import BytesIO
 
@@ -64,35 +65,6 @@ class TestConnectionErrors:
             with pytest.raises(TimeoutError, match="command .* timed out after 0.0001 seconds"):
                 await asyncio.gather(*[command.response for command in set_commands + get_commands])
 
-    async def test_socket_read_with_newlines(self, memcached_1, mocker):
-        await flush_server(memcached_1)
-        connection = memcachio.TCPConnection(memcached_1)
-        with closing(connection):
-            await connection.connect()
-            set_command = SetCommand("key", b"\r\n".join([b"this is a", b"multiline sentence"]))
-            connection.create_request(set_command)
-            assert await set_command.response
-            get_command = GetCommand("key")
-            connection.create_request(get_command)
-            item = await get_command.response
-            assert item.get(b"key").value == b"this is a\r\nmultiline sentence"
-
-    async def test_socket_read_batch(self, memcached_1, mocker):
-        await flush_server(memcached_1)
-        connection = memcachio.TCPConnection(memcached_1)
-        with closing(connection):
-            await connection.connect()
-            set_command = SetCommand("key", bytes(512 * 1024))
-            connection.create_request(set_command)
-            assert await set_command.response
-
-            data_received = mocker.spy(connection, "data_received")
-            get_command = GetCommand("key")
-            connection.create_request(get_command)
-            item = await get_command.response
-            assert item != {}
-            assert data_received.call_count > 1
-
     async def test_server_error(self, memcached_1):
         await flush_server(memcached_1)
         connection = memcachio.TCPConnection(memcached_1)
@@ -147,3 +119,59 @@ class TestConnectionErrors:
                 *[command.response for command in commands], return_exceptions=True
             )
             assert not all([k is True for k in responses])
+
+
+class TestDataReceived:
+    async def test_socket_read_with_newlines(self, memcached_1, mocker):
+        await flush_server(memcached_1)
+        connection = memcachio.TCPConnection(memcached_1)
+        with closing(connection):
+            await connection.connect()
+            set_command = SetCommand("key", b"\r\n".join([b"this is a", b"multiline sentence"]))
+            connection.create_request(set_command)
+            assert await set_command.response
+            get_command = GetCommand("key")
+            connection.create_request(get_command)
+            item = await get_command.response
+            assert item.get(b"key").value == b"this is a\r\nmultiline sentence"
+
+    async def test_socket_read_batch(self, memcached_1, mocker):
+        await flush_server(memcached_1)
+        connection = memcachio.TCPConnection(memcached_1)
+        with closing(connection):
+            await connection.connect()
+            set_command = SetCommand("key", bytes(512 * 1024))
+            connection.create_request(set_command)
+            assert await set_command.response
+
+            data_received = mocker.spy(connection, "data_received")
+            get_command = GetCommand("key")
+            connection.create_request(get_command)
+            item = await get_command.response
+            assert item != {}
+            assert data_received.call_count > 1
+
+
+class TestConnectionOptions:
+    async def test_socket_no_delay_tcp(self, memcached_1):
+        connection = memcachio.TCPConnection(memcached_1, socket_nodelay=False)
+        with closing(connection):
+            await connection.connect()
+            assert 0 == connection._transport.get_extra_info("socket").getsockopt(
+                socket.IPPROTO_TCP, socket.TCP_NODELAY
+            )
+
+        connection = memcachio.TCPConnection(memcached_1, socket_nodelay=True)
+        with closing(connection):
+            await connection.connect()
+            assert 0 != connection._transport.get_extra_info("socket").getsockopt(
+                socket.IPPROTO_TCP, socket.TCP_NODELAY
+            )
+
+    async def test_socket_no_delay_uds(self, memcached_uds):
+        connection = memcachio.UnixSocketConnection(memcached_uds, socket_nodelay=True)
+        with closing(connection):
+            await connection.connect()
+            with closing(connection):
+                await connection.connect()
+                assert connection.connected
