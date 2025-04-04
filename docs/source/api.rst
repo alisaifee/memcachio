@@ -26,7 +26,7 @@ Connection Pool
 .. autoclass:: memcachio.ClusterPool
    :class-doc-from: both
 
-.. autoclass:: memcachio.NodeHealthcheckConfig
+.. autoclass:: memcachio.EndpointHealthcheckConfig
    :no-inherited-members:
 
 .. autoenum:: memcachio.NodeStatus
