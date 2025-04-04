@@ -29,7 +29,7 @@ Connection Pool
 .. autoclass:: memcachio.EndpointHealthcheckConfig
    :no-inherited-members:
 
-.. autoenum:: memcachio.NodeStatus
+.. autoenum:: memcachio.EndpointStatus
    :no-inherited-members:
 
 .. autoclass:: memcachio.PoolMetrics
