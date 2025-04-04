@@ -195,7 +195,7 @@ class TestConnectionOptions:
         )
         with closing(connection):
             await connection.connect()
-            assert 0 != connection._transport.get_extra_info("socket").getsockopt(
+            assert socket.SO_KEEPALIVE == connection._transport.get_extra_info("socket").getsockopt(
                 socket.SOL_SOCKET, socket.SO_KEEPALIVE
             )
             assert 1 == connection._transport.get_extra_info("socket").getsockopt(
