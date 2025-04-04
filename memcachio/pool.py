@@ -630,7 +630,7 @@ class ClusterPool(Pool):
 
     def remove_endpoint(self, endpoint: SingleMemcachedInstanceEndpoint) -> None:
         """
-        Remove a endpoint from this pool. This will immediately also close
+        Remove an endpoint from this pool. This will immediately also close
         all connections to that endpoint.
         """
         normalized_endpoint = normalize_single_server_endpoint(endpoint)
@@ -643,8 +643,8 @@ class ClusterPool(Pool):
         self, endpoint: SingleMemcachedInstanceEndpoint, status: EndpointStatus
     ) -> None:
         """
-        Change the status of a endpoint in this pool.
-        Marking a endpoint as :enum:`EndpointStatus.DOWN` will immediately stop routing
+        Change the status of an endpoint in this pool.
+        Marking an endpoint as :enum:`EndpointStatus.DOWN` will immediately stop routing
         requests to it, while marking it as :enum:`EndpointStatus.UP` will immediately
         start routing requests to it.
         """
