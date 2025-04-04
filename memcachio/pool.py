@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 class EndpointStatus(enum.IntEnum):
     """
     Enumeration of endpoint statuses.
-    Used by :meth:`~ClusterPool.mark_endpoint`
+    Used by :meth:`~ClusterPool.update_endpoint_status`
     """
 
     #: Mark the endpoint as up and usable
