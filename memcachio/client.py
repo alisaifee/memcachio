@@ -8,11 +8,10 @@ from typing import (
     Literal,
     ParamSpec,
     TypeVar,
-    Unpack,
     overload,
 )
 
-from memcachio.commands import (
+from .commands import (
     AddCommand,
     AppendCommand,
     CheckAndSetCommand,
@@ -32,8 +31,9 @@ from memcachio.commands import (
     TouchCommand,
     VersionCommand,
 )
-from memcachio.connection import ConnectionParams
-from memcachio.defaults import (
+from .compat import Unpack
+from .connection import ConnectionParams
+from .defaults import (
     BLOCKING_TIMEOUT,
     CONNECT_TIMEOUT,
     ENCODING,
@@ -44,8 +44,8 @@ from memcachio.defaults import (
     MIN_CONNECTIONS,
     READ_TIMEOUT,
 )
-from memcachio.pool import ClusterPool, EndpointHealthcheckConfig, Pool, SingleServerPool
-from memcachio.types import (
+from .pool import ClusterPool, EndpointHealthcheckConfig, Pool, SingleServerPool
+from .types import (
     KeyT,
     MemcachedEndpoint,
     MemcachedItem,

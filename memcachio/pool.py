@@ -10,9 +10,10 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import suppress
-from typing import Any, Literal, TypeVar, Unpack, cast
+from typing import Any, Literal, TypeVar, cast
 
 from .commands import Command
+from .compat import Unpack, asyncio_timeout
 from .connection import (
     BaseConnection,
     ConnectionParams,
@@ -360,7 +361,7 @@ class SingleServerPool(Pool):
         await self.initialize()
         released = False
         try:
-            async with asyncio.timeout(self._blocking_timeout):
+            async with asyncio_timeout(self._blocking_timeout):
                 connection = await self.__connections.get()
                 try:
                     if connection and connection.reusable:
@@ -374,7 +375,7 @@ class SingleServerPool(Pool):
                     self.__connections.put_nowait(None)
                     raise
             return connection, not released
-        except TimeoutError:
+        except asyncio.TimeoutError:
             raise ConnectionNotAvailable(self.__server_endpoint, self._blocking_timeout)
 
     async def __create_connection(self) -> BaseConnection:

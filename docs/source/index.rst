@@ -103,9 +103,11 @@ Compatibility
 Supported python versions
 -------------------------
 
+- 3.10
 - 3.11
 - 3.12
 - 3.13
+- PyPy 3.10
 - PyPy 3.11
 
 

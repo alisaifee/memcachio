@@ -78,7 +78,7 @@ setup(
     package_data={
         "memcachio": ["py.typed"],
     },
-    python_requires=">=3.11",
+    python_requires=">=3.10",
     install_requires=get_requirements("main.txt"),
     cmdclass=versioneer.get_cmdclass(),
     classifiers=[

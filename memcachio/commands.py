@@ -10,8 +10,9 @@ from asyncio import Future
 from collections import ChainMap
 from collections.abc import Sequence
 from io import BytesIO
-from typing import AnyStr, ClassVar, Generic, Self, TypeVar, cast
+from typing import AnyStr, ClassVar, Generic, TypeVar, cast
 
+from .compat import Self
 from .constants import LINE_END, Commands, Responses
 from .errors import ClientError, MemcachedError, NotEnoughData, ServerError
 from .types import KeyT, MemcachedItem, SingleMemcachedInstanceEndpoint, ValueT

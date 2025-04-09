@@ -21,9 +21,10 @@ from contextlib import suppress
 from io import BytesIO
 from pathlib import Path
 from ssl import SSLContext
-from typing import Any, Generic, NotRequired, TypedDict, TypeVar, Unpack, cast
+from typing import Any, Generic, TypedDict, TypeVar, cast
 
 from .commands import Command, SetCommand
+from .compat import NotRequired, Unpack, asyncio_timeout
 from .defaults import (
     CONNECT_TIMEOUT,
     MAX_AVERAGE_RESPONSE_TIME_FOR_CONNECTION_REUSE,
@@ -378,7 +379,7 @@ class TCPConnection(BaseConnection):
             async with self._transport_lock:
                 if not self._transport:
                     try:
-                        async with asyncio.timeout(self._connect_timeout):
+                        async with asyncio_timeout(self._connect_timeout):
                             transport, _ = await get_running_loop().create_connection(
                                 lambda: self,
                                 host=self._host,
@@ -388,7 +389,7 @@ class TCPConnection(BaseConnection):
                             await self._write_ready.wait()
                             if self._auth:
                                 await self._authenticate()
-                    except (OSError, TimeoutError) as e:
+                    except (OSError, asyncio.TimeoutError) as e:
                         msg = f"Unable to establish a connection within {self._connect_timeout} seconds"
                         raise MemcachioConnectionError(msg, self.endpoint) from (
                             self._last_error or e
@@ -413,11 +414,11 @@ class UnixSocketConnection(BaseConnection):
             async with self._transport_lock:
                 if not self._transport:
                     try:
-                        async with asyncio.timeout(self._connect_timeout):
+                        async with asyncio_timeout(self._connect_timeout):
                             transport, _ = await get_running_loop().create_unix_connection(
                                 lambda: self, path=self._path
                             )
-                    except (OSError, TimeoutError) as e:
+                    except (OSError, asyncio.TimeoutError) as e:
                         msg = f"Unable to establish a connection within {self._connect_timeout} seconds"
                         raise MemcachioConnectionError(msg, self.endpoint) from e
                     await self._write_ready.wait()
