@@ -23,10 +23,17 @@ from .pool import (
     PoolMetrics,
     SingleServerPool,
 )
-from .types import MemcachedEndpoint, MemcachedItem, TCPEndpoint
+from .types import (
+    AWSAutoDiscoveryEndpoint,
+    MemcachedEndpoint,
+    MemcachedItem,
+    TCPEndpoint,
+    UnixSocketEndpoint,
+)
 
 __all__ = [
     "Authenticator",
+    "AWSAutoDiscoveryEndpoint",
     "BaseConnection",
     "Client",
     "ClusterPool",
@@ -43,6 +50,7 @@ __all__ = [
     "TCPConnection",
     "TCPEndpoint",
     "UnixSocketConnection",
+    "UnixSocketEndpoint",
     "defaults",
     "errors",
 ]

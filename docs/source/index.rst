@@ -33,7 +33,7 @@ with support for:
 - SASL Authentication
 - Connection reuse for multiple concurrent requests
 - Dynamically adjusted connection pooling
-
+- Auto discovery with AWS ElastiCache
 
 Installation
 ============

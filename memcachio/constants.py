@@ -6,6 +6,7 @@ LINE_END = b"\r\n"
 
 
 class Commands(bytes, enum.Enum):
+    CONFIG = b"config"
     GET = b"get"
     GETS = b"gets"
     GAT = b"gat"

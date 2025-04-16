@@ -50,6 +50,65 @@ def host_ip_env(host_ip):
     os.environ["HOST_IP"] = str(host_ip)
 
 
+class FakeElasticacheServer:
+    def __init__(self, servers: dict[str, tuple[str, int]]):
+        self.servers = servers
+        self.server = None
+        self.version = 1
+
+    @property
+    def location(self) -> tuple[str, int]:
+        return ("localhost", 55551)
+
+    async def start(self) -> None:
+        self.server = await asyncio.start_server(self.handle_client, "localhost", 55551)
+        await self.server.serve_forever()
+
+    async def handle_client(self, reader, writer):
+        data = await reader.read(100)
+        message = data.decode().lower()
+        if "config get cluster" in message:
+            servers = []
+            for server, location in self.servers.items():
+                servers.append(f"{server}|{location[0]}|{location[1]}")
+
+            response = f"CONFIG cluster 0 {len(' '.join(servers))}\r\n"
+            response += f"{self.version}\r\n"
+            response += f"{' '.join(servers)}\r\nEND\r\n"
+        else:
+            response = f"Command '{message}' not recognized\n"
+
+        writer.write(response.encode())
+        await writer.drain()
+        writer.close()
+
+    def add_server(self, name: str, endpoint: tuple[str, int]):
+        self.servers[name] = endpoint
+        self.version += 1
+
+    def remove_server(self, name):
+        self.servers.pop(name)
+        self.version += 1
+
+    async def stop(self):
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+
+
+@pytest.fixture
+async def elasticache_endpoint(memcached_1, memcached_2):
+    # Configure the server with the list of memcached server addresses
+    server = FakeElasticacheServer(
+        servers={"memcached-1": memcached_1, "memcached-2": memcached_2},
+    )
+
+    asyncio.ensure_future(server.start())
+    await asyncio.sleep(0.1)
+    yield server
+    await server.stop()
+
+
 @pytest.fixture(scope="session")
 def docker_services(host_ip_env, docker_services):
     return docker_services

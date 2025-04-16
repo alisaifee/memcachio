@@ -25,10 +25,29 @@ class TCPEndpoint(NamedTuple):
 #: Path to a memcached server listening on a UDS socket
 UnixSocketEndpoint = str | Path
 
+
+class AWSAutoDiscoveryEndpoint(NamedTuple):
+    """
+    Location of a memcached auto-discovery endpoint
+    for use with AWS Elasticache
+    """
+
+    #: IPV4/6 host address
+    host: str
+    #: IPV4/6 port
+    port: int
+    #: How often to trigger a refresh to check for updates
+    refresh_interval: float
+
+
 #: The total description of a single memcached instance
 SingleMemcachedInstanceEndpoint = UnixSocketEndpoint | TCPEndpoint | tuple[str, int]
 #: The total description of either a single memcached instance or a memcached cluster
-MemcachedEndpoint = SingleMemcachedInstanceEndpoint | Sequence[SingleMemcachedInstanceEndpoint]
+MemcachedEndpoint = (
+    SingleMemcachedInstanceEndpoint
+    | Sequence[SingleMemcachedInstanceEndpoint]
+    | AWSAutoDiscoveryEndpoint
+)
 
 
 @dataclass
@@ -52,6 +71,8 @@ class MemcachedItem(Generic[AnyStr]):
 
 
 def is_single_server(endpoint: MemcachedEndpoint) -> TypeGuard[SingleMemcachedInstanceEndpoint]:
+    if isinstance(endpoint, AWSAutoDiscoveryEndpoint):
+        return False
     if isinstance(endpoint, (UnixSocketEndpoint, TCPEndpoint)):
         return True
     if (
@@ -75,6 +96,8 @@ def normalize_single_server_endpoint(
 def normalize_endpoint(endpoint: MemcachedEndpoint) -> MemcachedEndpoint:
     if is_single_server(endpoint):
         return normalize_single_server_endpoint(endpoint)
+    elif isinstance(endpoint, AWSAutoDiscoveryEndpoint):
+        return endpoint
     else:
         return [
             normalize_single_server_endpoint(single)

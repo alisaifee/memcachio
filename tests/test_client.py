@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import ssl
 from contextlib import closing
 
 import pytest
 
 import memcachio
-from memcachio import Authenticator, BaseConnection
+from memcachio import Authenticator, AWSAutoDiscoveryEndpoint, BaseConnection
 from memcachio.commands import Command, SetCommand
 from memcachio.errors import ClientError, MemcachioConnectionError
 from memcachio.pool import ClusterPool, Pool, PoolMetrics, R, SingleServerPool
@@ -58,7 +59,7 @@ class TestClient:
         client = memcachio.Client(connection_pool=MyPool(memcached_1))
         assert await client.set("fubar", 1)
 
-    async def test_sasl_authentication(selfself, memcached_sasl):
+    async def test_sasl_authentication(self, memcached_sasl):
         client = memcachio.Client(memcached_sasl)
         with closing(client.connection_pool):
             with pytest.raises(ClientError, match="unauthenticated"):
@@ -69,7 +70,7 @@ class TestClient:
             client = memcachio.Client(memcached_sasl, username="user", password="password")
             await client.get("test")
 
-    async def test_sasl_authentication_with_custom_authenticator(selfself, memcached_sasl):
+    async def test_sasl_authentication_with_custom_authenticator(self, memcached_sasl):
         class MyAuthenticator(Authenticator):
             def __init__(self, username: str, password: str, lie: bool = False):
                 self.username = username
@@ -91,3 +92,13 @@ class TestClient:
         with closing(lie_client.connection_pool):
             with pytest.raises(ClientError, match="authentication failure"):
                 await lie_client.get("test")
+
+    async def test_autodiscovery_client(self, elasticache_endpoint, memcached_1):
+        client = memcachio.Client(AWSAutoDiscoveryEndpoint(*elasticache_endpoint.location, 0.1))
+        assert len(await client.version()) == 2
+        elasticache_endpoint.remove_server("memcached-1")
+        await asyncio.sleep(0.5)
+        assert len(await client.version()) == 1
+        elasticache_endpoint.add_server("memcached-1", memcached_1)
+        await asyncio.sleep(0.5)
+        assert len(await client.version()) == 2
