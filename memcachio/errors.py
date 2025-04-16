@@ -73,3 +73,11 @@ class NoAvailableNodes(ValueError):
     """
 
     pass
+
+
+class AutoDiscoveryError(MemcachedError):
+    """
+    Raised when the response for autodiscovery is invalid
+    """
+
+    pass

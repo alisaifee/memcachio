@@ -14,8 +14,14 @@ from typing import AnyStr, ClassVar, Generic, TypeVar, cast
 
 from .compat import Self
 from .constants import LINE_END, Commands, Responses
-from .errors import ClientError, MemcachedError, NotEnoughData, ServerError
-from .types import KeyT, MemcachedItem, SingleMemcachedInstanceEndpoint, ValueT
+from .errors import (
+    AutoDiscoveryError,
+    ClientError,
+    MemcachedError,
+    NotEnoughData,
+    ServerError,
+)
+from .types import KeyT, MemcachedItem, SingleMemcachedInstanceEndpoint, TCPEndpoint, ValueT
 from .utils import bytestr, decodedstr
 
 R = TypeVar("R")
@@ -448,3 +454,21 @@ class StatsCommand(Command[dict[SingleMemcachedInstanceEndpoint, dict[AnyStr, An
         self, responses: list[dict[SingleMemcachedInstanceEndpoint, dict[AnyStr, AnyStr]]]
     ) -> dict[SingleMemcachedInstanceEndpoint, dict[AnyStr, AnyStr]]:
         return dict(ChainMap(*responses))
+
+
+class AWSAutoDiscoveryConfig(Command[tuple[int, set[SingleMemcachedInstanceEndpoint]]]):
+    name = Commands.CONFIG
+
+    def build_request(self) -> Request[R]:
+        return Request(weakref.proxy(self), b"get cluster")
+
+    def parse(
+        self, data: BytesIO, endpoint: SingleMemcachedInstanceEndpoint
+    ) -> tuple[int, set[SingleMemcachedInstanceEndpoint]]:
+        header = data.readline()
+        self._check_header(header)
+        version = int(data.readline())
+        parsed_endpoints = [host.split(b"|") for host in data.readline().split(b" ")]
+        if (data.readline().strip()) != Responses.END:
+            raise AutoDiscoveryError("Malformed response")
+        return version, {TCPEndpoint(host[1].decode(), int(host[2])) for host in parsed_endpoints}

@@ -9,10 +9,10 @@ import weakref
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
-from contextlib import suppress
+from contextlib import closing, suppress
 from typing import Any, Literal, TypeVar, cast
 
-from .commands import Command
+from .commands import AWSAutoDiscoveryConfig, Command
 from .compat import Unpack, asyncio_timeout
 from .connection import (
     BaseConnection,
@@ -22,18 +22,21 @@ from .connection import (
 )
 from .defaults import (
     BLOCKING_TIMEOUT,
+    CONNECT_TIMEOUT,
     IDLE_CONNECTION_TIMEOUT,
     MAX_CONNECTIONS,
     MAXIMUM_ERROR_COUNT_FOR_ENDPOINT_REMOVAL,
     MAXIMUM_RECOVERY_ATTEMPTS,
     MIN_CONNECTIONS,
     MONITOR_UNHEALTHY_ENDPOINTS,
+    READ_TIMEOUT,
     REMOVE_UNHEALTHY_ENDPOINTS,
     RETRY_BACKOFF_POLICY,
 )
 from .errors import ConnectionNotAvailable, MemcachioConnectionError
 from .routing import KeyRouter
 from .types import (
+    AWSAutoDiscoveryEndpoint,
     MemcachedEndpoint,
     SingleMemcachedInstanceEndpoint,
     UnixSocketEndpoint,
@@ -425,7 +428,7 @@ class ClusterPool(Pool):
 
     def __init__(
         self,
-        endpoint: Sequence[SingleMemcachedInstanceEndpoint],
+        endpoint: Sequence[SingleMemcachedInstanceEndpoint] | AWSAutoDiscoveryEndpoint,
         min_connections: int = MIN_CONNECTIONS,
         max_connections: int = MAX_CONNECTIONS,
         blocking_timeout: float = BLOCKING_TIMEOUT,
@@ -460,16 +463,23 @@ class ClusterPool(Pool):
             idle_connection_timeout=idle_connection_timeout,
             **connection_args,
         )
-        self.__all_endpoints: set[SingleMemcachedInstanceEndpoint] = {
-            normalize_single_server_endpoint(endpoint)
-            for endpoint in cast(Iterable[SingleMemcachedInstanceEndpoint], self.endpoint)
-        }
+        self.__autodiscovery_current_version: int = 0
+        self.__autodiscovery_endpoint: AWSAutoDiscoveryEndpoint | None = None
+        self.__all_endpoints: set[SingleMemcachedInstanceEndpoint] = set()
+        if isinstance(self.endpoint, AWSAutoDiscoveryEndpoint):
+            self.__autodiscovery_endpoint = self.endpoint
+        else:
+            self.__all_endpoints = {
+                normalize_single_server_endpoint(endpoint)
+                for endpoint in cast(Iterable[SingleMemcachedInstanceEndpoint], self.endpoint)
+            }
         self.__unhealthy_endpoints: set[SingleMemcachedInstanceEndpoint] = set()
         self._router = KeyRouter(self.__all_endpoints, hasher=hashing_function)
         self.__healthcheck_tasks: dict[SingleMemcachedInstanceEndpoint, asyncio.Task[None]] = {}
         self.__endpoint_healthcheck_config: EndpointHealthcheckConfig = (
             endpoint_healthcheck_config or EndpointHealthcheckConfig()
         )
+        self.__autodiscovery_task: asyncio.Task[None] | None = None
 
     @property
     def metrics(self) -> PoolMetrics:
@@ -489,14 +499,54 @@ class ClusterPool(Pool):
     def endpoints(self) -> set[SingleMemcachedInstanceEndpoint]:
         return self.__all_endpoints - self.__unhealthy_endpoints
 
+    async def __autodiscovery_query(self) -> None:
+        if self.__autodiscovery_endpoint:
+            with closing(
+                TCPConnection(
+                    (self.__autodiscovery_endpoint.host, self.__autodiscovery_endpoint.port),
+                    connect_timeout=self._connection_parameters.get(
+                        "connect_timeout", CONNECT_TIMEOUT
+                    ),
+                    read_timeout=self._connection_parameters.get("read_timeout", READ_TIMEOUT),
+                )
+            ) as connection:
+                await connection.connect()
+                command = AWSAutoDiscoveryConfig()
+                connection.create_request(command)
+                autodiscovery_version, endpoints = await command.response
+                if autodiscovery_version > self.__autodiscovery_current_version:
+                    new_endpoints = endpoints - self.__all_endpoints
+                    discarded_endpoints = self.__all_endpoints - endpoints
+                    for endpoint in new_endpoints:
+                        self.add_endpoint(endpoint)
+                    for endpoint in discarded_endpoints:
+                        self.remove_endpoint(endpoint)
+                    self.__autodiscovery_current_version = autodiscovery_version
+
+    async def __refresh_autodiscovered_endpoints(self) -> None:
+        if not self.__autodiscovery_endpoint:
+            return
+        while True:
+            try:
+                await self.__autodiscovery_query()
+                await asyncio.sleep(self.__autodiscovery_endpoint.refresh_interval)
+            except asyncio.CancelledError:
+                break
+
     async def initialize(self) -> None:
         if self.__initialized:
             return
         async with self.__pool_lock:
             if self.__initialized:
                 return
-            for endpoint in self.endpoints:
-                self.add_endpoint(endpoint)
+            if self.__autodiscovery_endpoint:
+                await self.__autodiscovery_query()
+                self.__autodiscovery_task = asyncio.create_task(
+                    self.__refresh_autodiscovered_endpoints()
+                )
+            else:
+                for endpoint in self.endpoints:
+                    self.add_endpoint(endpoint)
             await asyncio.gather(
                 *[self._cluster_pools[endpoint].initialize() for endpoint in self.endpoints]
             )
