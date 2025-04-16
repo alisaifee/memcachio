@@ -23,7 +23,8 @@ from pathlib import Path
 from ssl import SSLContext
 from typing import Any, Generic, TypedDict, TypeVar, cast
 
-from .commands import Command, SetCommand
+from .authentication import Authenticator, SimpleAuthenticator
+from .commands import Command
 from .compat import NotRequired, Unpack, asyncio_timeout
 from .defaults import (
     CONNECT_TIMEOUT,
@@ -33,7 +34,7 @@ from .defaults import (
 )
 from .errors import MemcachedError, MemcachioConnectionError, NotEnoughData
 from .types import SingleMemcachedInstanceEndpoint, TCPEndpoint, UnixSocketEndpoint
-from .utils import bytestr, decodedstr
+from .utils import decodedstr
 
 R = TypeVar("R")
 
@@ -55,6 +56,8 @@ class ConnectionParams(TypedDict):
     max_average_response_time_for_connection_reuse: NotRequired[float]
     #: SSL context to use if connecting to a memcached instance listening on a secure port
     ssl_context: NotRequired[SSLContext | None]
+    #: Authentication strategy to use after establishing a connection
+    authenticator: NotRequired[Authenticator | None]
     #: Username for SASL authentication
     username: NotRequired[str | None]
     #: Password for SASL authentication
@@ -142,6 +145,7 @@ class BaseConnection(BaseProtocol, ABC):
 
     def __init__(
         self,
+        *,
         connect_timeout: float | None = CONNECT_TIMEOUT,
         read_timeout: float | None = READ_TIMEOUT,
         socket_keepalive: bool | None = True,
@@ -150,6 +154,7 @@ class BaseConnection(BaseProtocol, ABC):
         max_inflight_requests_per_connection: int = MAX_INFLIGHT_REQUESTS_PER_CONNECTION,
         max_average_response_time_for_connection_reuse: float = MAX_AVERAGE_RESPONSE_TIME_FOR_CONNECTION_REUSE,
         ssl_context: SSLContext | None = None,
+        authenticator: Authenticator | None = None,
         username: str | None = None,
         password: str | None = None,
         on_connect_callbacks: list[Callable[[BaseConnection], None]] | None = None,
@@ -165,6 +170,7 @@ class BaseConnection(BaseProtocol, ABC):
         :param max_average_response_time_for_connection_reuse: Threshold for allowing the connection to be
          reused when there are requests pending.
         :param ssl_context: SSL context for secure connections.
+        :param authenticator: Authentication strategy to use after establishing a connection
         :param username: Username for SASL authentication.
         :param password: Password for SASL authentication.
         :param on_connect_callbacks: Callbacks to invoke upon successful connection.
@@ -189,8 +195,10 @@ class BaseConnection(BaseProtocol, ABC):
         self._request_lock: Lock = Lock()
         self._connect_callbacks = [weakref.proxy(cb) for cb in on_connect_callbacks or []]
         self._disconnect_callbacks = [weakref.proxy(cb) for cb in on_disconnect_callbacks or []]
-        self._auth = (bytestr(username), bytestr(password)) if username and password else None
         self.metrics: ConnectionMetrics = ConnectionMetrics()
+        self._authenticator = authenticator or (
+            SimpleAuthenticator(username, password) if (username and password) else None
+        )
 
     @abstractmethod
     async def connect(self) -> None:
@@ -328,10 +336,8 @@ class BaseConnection(BaseProtocol, ABC):
         self.__on_disconnect(True, "EOF received")
 
     async def _authenticate(self) -> None:
-        if self._auth:
-            auth_command = SetCommand("auth", b"%b %b" % self._auth)
-            self.create_request(auth_command)
-            await auth_command.response
+        if self._authenticator:
+            await self._authenticator.authenticate(self)
 
     def __on_disconnect(self, from_server: bool = False, reason: str | None = None) -> None:
         self._write_ready.clear()
@@ -387,8 +393,7 @@ class TCPConnection(BaseConnection):
                                 ssl=self._ssl_context,
                             )
                             await self._write_ready.wait()
-                            if self._auth:
-                                await self._authenticate()
+                            await self._authenticate()
                     except (OSError, asyncio.TimeoutError) as e:
                         msg = f"Unable to establish a connection within {self._connect_timeout} seconds"
                         raise MemcachioConnectionError(msg, self.endpoint) from (

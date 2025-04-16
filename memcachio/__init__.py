@@ -6,6 +6,7 @@ async memcached client
 from __future__ import annotations
 
 from . import _version, defaults, errors
+from .authentication import Authenticator, SimpleAuthenticator
 from .client import Client
 from .connection import (
     BaseConnection,
@@ -25,6 +26,7 @@ from .pool import (
 from .types import MemcachedEndpoint, MemcachedItem, TCPEndpoint
 
 __all__ = [
+    "Authenticator",
     "BaseConnection",
     "Client",
     "ClusterPool",
@@ -36,6 +38,7 @@ __all__ = [
     "EndpointHealthcheckConfig",
     "Pool",
     "PoolMetrics",
+    "SimpleAuthenticator",
     "SingleServerPool",
     "TCPConnection",
     "TCPEndpoint",

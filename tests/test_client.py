@@ -6,7 +6,8 @@ from contextlib import closing
 import pytest
 
 import memcachio
-from memcachio.commands import Command
+from memcachio import Authenticator, BaseConnection
+from memcachio.commands import Command, SetCommand
 from memcachio.errors import ClientError, MemcachioConnectionError
 from memcachio.pool import ClusterPool, Pool, PoolMetrics, R, SingleServerPool
 from memcachio.types import TCPEndpoint
@@ -67,3 +68,26 @@ class TestClient:
                 await client.get("test")
             client = memcachio.Client(memcached_sasl, username="user", password="password")
             await client.get("test")
+
+    async def test_sasl_authentication_with_custom_authenticator(selfself, memcached_sasl):
+        class MyAuthenticator(Authenticator):
+            def __init__(self, username: str, password: str, lie: bool = False):
+                self.username = username
+                self.password = password
+                self.lie = lie
+
+            async def authenticate(self, connection: BaseConnection) -> bool:
+                value = f"{self.username} {self.password}" if not self.lie else "lies lies"
+                command = SetCommand("auth", value)
+                connection.create_request(command)
+                return await command.response
+
+        client = memcachio.Client(memcached_sasl, authenticator=MyAuthenticator("user", "password"))
+        with closing(client.connection_pool):
+            await client.get("test")
+        lie_client = memcachio.Client(
+            memcached_sasl, authenticator=MyAuthenticator("user", "password", True)
+        )
+        with closing(lie_client.connection_pool):
+            with pytest.raises(ClientError, match="authentication failure"):
+                await lie_client.get("test")

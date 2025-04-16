@@ -74,6 +74,18 @@ Command Types
    :no-inherited-members:
    :class-doc-from: both
 
+--------------
+Authentication
+--------------
+
+.. autoclass:: memcachio.Authenticator
+   :no-inherited-members:
+   :class-doc-from: both
+
+.. autoclass:: memcachio.SimpleAuthenticator
+   :no-inherited-members:
+   :class-doc-from: both
+
 -------
 Routing
 -------

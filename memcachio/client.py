@@ -11,6 +11,7 @@ from typing import (
     overload,
 )
 
+from .authentication import Authenticator
 from .commands import (
     AddCommand,
     AppendCommand,
@@ -84,6 +85,7 @@ class Client(Generic[AnyStr]):
         ssl_context: SSLContext | None = ...,
         username: str | None = ...,
         password: str | None = ...,
+        authenticator: Authenticator | None = ...,
     ) -> None: ...
 
     @overload
@@ -109,6 +111,7 @@ class Client(Generic[AnyStr]):
         ssl_context: SSLContext | None = ...,
         username: str | None = ...,
         password: str | None = ...,
+        authenticator: Authenticator | None = ...,
     ) -> None: ...
 
     def __init__(
@@ -133,6 +136,7 @@ class Client(Generic[AnyStr]):
         ssl_context: SSLContext | None = None,
         username: str | None = None,
         password: str | None = None,
+        authenticator: Authenticator | None = None,
     ) -> None:
         """
         Initialize the Memcached client.
@@ -173,6 +177,7 @@ class Client(Generic[AnyStr]):
         :param ssl_context: An SSL context to use for encrypted connections.
         :param username: Username for SASL authentication (if required).
         :param password: Password for SASL authentication (if required).
+        :param authenticator: The authentication strategy to use when establishing new connections
         :raises ValueError: If both or neither memcached_location and connection_pool are provided.
         """
         if memcached_location and not connection_pool:
@@ -194,6 +199,7 @@ class Client(Generic[AnyStr]):
                 ssl_context=ssl_context,
                 username=username,
                 password=password,
+                authenticator=authenticator,
             )
         elif connection_pool and not memcached_location:
             self.connection_pool = connection_pool
