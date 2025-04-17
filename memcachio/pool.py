@@ -658,6 +658,9 @@ class ClusterPool(Pool):
             pool.close()
         for task in self.__healthcheck_tasks.values():
             task.cancel()
+        if self.__autodiscovery_task:
+            self.__autodiscovery_task.cancel()
+            self.__autodiscovery_task = None
         self.__healthcheck_tasks.clear()
         self.__unhealthy_endpoints.clear()
         self.__initialized = False
