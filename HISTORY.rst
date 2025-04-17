@@ -1,6 +1,16 @@
 Changelog
 ==========
 
+v0.4.1
+------
+Release Date: 2025-04-17
+
+* Bug fix
+
+  * Fix parsing of autodiscovery config get command
+  * Ensure autodiscovery task gets cancelled on pool
+    close.
+
 v0.4.0
 ------
 Release Date: 2025-04-16
@@ -70,6 +80,7 @@ Initial Release
   * Support for single or cluster hosts (TCP/UDS)
   * SASL Authentication
   * SSL connections
+
 
 
 
