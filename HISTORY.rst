@@ -1,6 +1,15 @@
 Changelog
 ==========
 
+v0.4.0
+------
+Release Date: 2025-04-16
+
+* Features
+
+  * Add support for auto discovery with AWS Elasticache
+  * Add support for custom authentication strategies (enables support for MemCachier)
+
 v0.3
 ----
 Release Date: 2025-04-09
@@ -61,6 +70,7 @@ Initial Release
   * Support for single or cluster hosts (TCP/UDS)
   * SASL Authentication
   * SSL connections
+
 
 
 
