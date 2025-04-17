@@ -73,8 +73,10 @@ class FakeElasticacheServer:
                 servers.append(f"{server}|{location[0]}|{location[1]}")
 
             response = f"CONFIG cluster 0 {len(' '.join(servers))}\r\n"
-            response += f"{self.version}\r\n"
-            response += f"{' '.join(servers)}\r\nEND\r\n"
+            response += f"{self.version}\n"
+            response += f"{' '.join(servers)}\n"
+            response += "\r\n"
+            response += "END\r\n"
         else:
             response = f"Command '{message}' not recognized\n"
 

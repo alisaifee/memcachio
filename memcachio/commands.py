@@ -468,7 +468,8 @@ class AWSAutoDiscoveryConfig(Command[tuple[int, set[SingleMemcachedInstanceEndpo
         header = data.readline()
         self._check_header(header)
         version = int(data.readline())
-        parsed_endpoints = [host.split(b"|") for host in data.readline().split(b" ")]
+        parsed_endpoints = [host.split(b"|") for host in data.readline().strip().split(b" ")]
+        data.readline()
         if (data.readline().strip()) != Responses.END:
             raise AutoDiscoveryError("Malformed response")
         return version, {TCPEndpoint(host[1].decode(), int(host[2])) for host in parsed_endpoints}
