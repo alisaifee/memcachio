@@ -1,3 +1,0 @@
--r main.txt
-ruff
-
