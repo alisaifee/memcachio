@@ -1,11 +1,11 @@
 lint:
-	ruff check --select I memcachio tests setup.py
-	ruff check memcachio tests setup.py
-	ruff format --check memcachio tests setup.py
-	mypy memcachio
+	uv run ruff check --select I memcachio tests setup.py
+	uv run ruff check memcachio tests setup.py
+	uv run ruff format --check memcachio tests setup.py
+	uv run mypy memcachio
 
 lint-fix:
-	ruff check --select I --fix memcachio tests setup.py
-	ruff check --fix memcachio tests setup.py
-	ruff format memcachio tests setup.py
-	mypy memcachio
+	uv run ruff check --select I --fix memcachio tests setup.py
+	uv run ruff check --fix memcachio tests setup.py
+	uv run ruff format memcachio tests setup.py
+	uv run mypy memcachio

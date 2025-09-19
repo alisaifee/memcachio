@@ -8,6 +8,80 @@ requires = [
   "versioneer[toml]",
 ]
 
+[project]
+name = "memcachio"
+description = "Python async client for Memcached"
+readme = "README.md"
+authors = [{ name = "Ali-Akber Saifee", email = "ali@indydevs.org"}]
+maintainers = [{ name = "Ali-Akber Saifee", email = "ali@indydevs.org"}]
+license = "MIT"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+keywords = ["Memcached", "asyncio"]
+requires-python = ">=3.10"
+dynamic = ["version"]
+dependencies = [
+  'async_timeout>5,<6;python_version<"3.11"',
+  'typing_extensions>=4.3;python_version<"3.11"',
+
+]
+
+[project.urls]
+Homepage = "https://memcachio.readthedocs.org"
+Source =  "https://github.com/alisaifee/memcachio"
+Documentation = "https://memcachio.readthedocs.org"
+
+[dependency-groups]
+
+test = [
+  "beartype",
+  "coverage",
+  "lovely-pytest-docker",
+  "mmh3",
+  "pytest",
+  "pytest-asyncio",
+  "pytest-benchmark[histogram]",
+  "pytest-cov",
+  "pytest-env",
+  "pytest-lazy-fixtures",
+  "pytest-mock",
+  "pytest-reverse",
+]
+
+dev = [
+  "ruff",
+  "mypy==1.15.0; implementation_name!='pypy'",
+  {include-group = "test"},
+]
+
+ci = [
+  {include-group = "dev"},
+]
+
+docs = [
+  "requests>2,<3",
+  "furo==2024.8.6",
+  "Sphinx>=4,<9",
+  "enum-tools[sphinx]==0.12.0",
+  "sphinx-copybutton==0.5.2",
+  "sphinx-autobuild==2024.10.3",
+  "sphinx-issues==5.0.1",
+  "sphinxext-opengraph==0.10.0",
+  "sphinx-sitemap==2.6.0",
+  "sphinx-paramlinks==0.6.0",
+  "sphinxcontrib-programoutput==0.18",
+  {include-group = "dev"},
+
+]
+
 [tool.mypy]
 strict = true
 check_untyped_defs = true
@@ -40,6 +114,20 @@ exclude = ["doc/**","_version.py","versioneer.py"]
 
 [tool.ruff.lint.isort]
 required-imports = ["from __future__ import annotations"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+coredis = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = { attr = "versioneer.get_version" }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["memcachio*"]
+
 
 [tool.versioneer]
 VCS = "git"
