@@ -372,15 +372,15 @@ wheels = [
 
 [[package]]
 name = "enum-tools"
-version = "0.12.0"
+version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pygments" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/94/06/55dfd19df0386a2a90d325dba67b0b5ba0b879a4bdac9cd225c22f6736d8/enum_tools-0.12.0.tar.gz", hash = "sha256:13ceb9376a4c5f574a1e7c5f9c8eb7f3d3fbfbb361cc18a738df1a58dfefd460", size = 18931, upload-time = "2024-04-02T17:55:42.733Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6d/87/50091e20c2765aa495b24521844a7d8f7041d48e4f9b47dd928cd38c8606/enum_tools-0.13.0.tar.gz", hash = "sha256:0d13335e361d300dc0f8fd82c8cf9951417246f9676144f5ee1761eb690228eb", size = 18904, upload-time = "2025-04-17T15:26:59.412Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/fc/cc600677fe58519352ae5fe9367d05d0054faa47e8c57ef50a1bb9c77b0e/enum_tools-0.12.0-py3-none-any.whl", hash = "sha256:d69b019f193c7b850b17d9ce18440db7ed62381571409af80ccc08c5218b340a", size = 22356, upload-time = "2024-04-02T17:55:40.688Z" },
+    { url = "https://files.pythonhosted.org/packages/84/45/cf8a8df3ebe78db691ab54525d552085b67658877f0334f4b0c08c43b518/enum_tools-0.13.0-py3-none-any.whl", hash = "sha256:e0112b16767dd08cb94105844b52770eae67ece6f026916a06db4a3d330d2a95", size = 22366, upload-time = "2025-04-17T15:26:58.34Z" },
 ]
 
 [package.optional-dependencies]
@@ -396,7 +396,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749, upload-time = "2025-05-10T17:42:51.123Z" }
 wheels = [
@@ -695,7 +695,7 @@ dev = [
 docs = [
     { name = "beartype" },
     { name = "coverage" },
-    { name = "enum-tools", extras = ["sphinx"], specifier = "==0.12.0" },
+    { name = "enum-tools", extras = ["sphinx"], specifier = "==0.13.0" },
     { name = "furo", specifier = "==2024.8.6" },
     { name = "lovely-pytest-docker" },
     { name = "mmh3" },
