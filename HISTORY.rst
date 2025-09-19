@@ -1,6 +1,13 @@
 Changelog
 ==========
 
+v0.4.2
+------
+Release Date: 2025-09-18
+
+* Chore
+
+  * Migrate project metadata and build setup to pyproject.toml
 v0.4.1
 ------
 Release Date: 2025-04-17
@@ -80,6 +87,7 @@ Initial Release
   * Support for single or cluster hosts (TCP/UDS)
   * SASL Authentication
   * SSL connections
+
 
 
 
