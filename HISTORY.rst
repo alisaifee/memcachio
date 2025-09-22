@@ -1,6 +1,19 @@
 Changelog
 ==========
 
+v0.5
+----
+Release Date: 2025-09-22
+
+* Compatibility
+
+  * Update dev dependencies
+
+
+v0.4.3
+------
+Release Date: 2025-09-22
+
 v0.4.2
 ------
 Release Date: 2025-09-18
@@ -87,6 +100,8 @@ Initial Release
   * Support for single or cluster hosts (TCP/UDS)
   * SASL Authentication
   * SSL connections
+
+
 
 
 
