@@ -1,6 +1,14 @@
 Changelog
 ==========
 
+v0.5.1
+------
+Release Date: 2025-09-29
+
+* Bug Fix
+
+  * Fix version attribute in build
+
 v0.5
 ----
 Release Date: 2025-09-22
@@ -100,6 +108,7 @@ Initial Release
   * Support for single or cluster hosts (TCP/UDS)
   * SASL Authentication
   * SSL connections
+
 
 
 
