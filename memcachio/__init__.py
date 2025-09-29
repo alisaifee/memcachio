@@ -54,4 +54,4 @@ __all__ = [
     "defaults",
     "errors",
 ]
-__version__ = _version.get_versions()["version"]
+__version__ = _version.__version__
