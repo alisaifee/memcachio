@@ -69,7 +69,7 @@ ci = [
 
 docs = [
   "requests>2,<3",
-  "furo==2025.7.19",
+  "furo==2025.9.25",
   "Sphinx>=4,<9",
   "enum-tools[sphinx]==0.13.0",
   "sphinx-copybutton==0.5.2",
