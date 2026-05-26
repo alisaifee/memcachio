@@ -3,7 +3,7 @@ build-backend = "hatchling.build"
 requires = [
   "hatchling>=1.14.0",
   "hatch-vcs>=0.4.0",
-  "mypy==1.18.2",
+  "mypy==2.1.0",
   "packaging>=21,<26",
   "setuptools",
   "types_deprecated",
@@ -59,7 +59,7 @@ test = [
 
 dev = [
   "ruff",
-  "mypy==1.18.2; implementation_name!='pypy'",
+  "mypy==2.1.0; implementation_name!='pypy'",
   {include-group = "test"},
 ]
 
